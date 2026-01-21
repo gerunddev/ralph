@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -88,50 +89,137 @@ func TestNewClient_EmptyPath(t *testing.T) {
 }
 
 // =============================================================================
+// Unit Tests - New
+// =============================================================================
+
+func TestNew(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.New(context.Background())
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+
+	// Verify the call
+	if len(mock.calls) != 1 {
+		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	if call.name != "jj" {
+		t.Errorf("Call name = %q, want %q", call.name, "jj")
+	}
+	expectedArgs := []string{"new"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Call args = %v, want %v", call.args, expectedArgs)
+	}
+	if call.dir != "/test/dir" {
+		t.Errorf("Call dir = %q, want %q", call.dir, "/test/dir")
+	}
+}
+
+func TestNew_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: not a jj repository", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.New(context.Background())
+	if err == nil {
+		t.Fatal("New() should return error")
+	}
+}
+
+func TestNew_NotRepo(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: There is no jj repo in \"/test\"", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.New(context.Background())
+	if !errors.Is(err, ErrNotRepo) {
+		t.Errorf("New() error = %v, want ErrNotRepo", err)
+	}
+}
+
+// =============================================================================
 // Unit Tests - NewChange
 // =============================================================================
 
 func TestNewChange(t *testing.T) {
 	mock := newMockRunner()
-	// First call: jj new -m "description"
+	// First call: jj new --no-edit -m "description"
 	mock.addResponse("", "", nil)
 	// Second call: jj log -r @ -T change_id --no-graph
-	mock.addResponse("abc123xyz", "", nil)
+	mock.addResponse("abc123def456", "", nil)
 
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	changeID, err := client.NewChange(context.Background(), "Test change")
+	changeID, err := client.NewChange(context.Background(), "Test description")
 	if err != nil {
 		t.Fatalf("NewChange() returned error: %v", err)
 	}
 
-	if changeID != "abc123xyz" {
-		t.Errorf("NewChange() changeID = %q, want %q", changeID, "abc123xyz")
+	if changeID != "abc123def456" {
+		t.Errorf("NewChange() changeID = %q, want %q", changeID, "abc123def456")
 	}
 
-	// Verify the calls
+	// Verify the first call (new)
 	if len(mock.calls) != 2 {
 		t.Fatalf("Expected 2 calls, got %d", len(mock.calls))
 	}
 
-	// First call should be jj new
-	call := mock.calls[0]
-	if call.name != "jj" {
-		t.Errorf("Call 1 name = %q, want %q", call.name, "jj")
+	newCall := mock.calls[0]
+	expectedNewArgs := []string{"new", "--no-edit", "-m", "Test description"}
+	if !slices.Equal(newCall.args, expectedNewArgs) {
+		t.Errorf("NewChange() new call args = %v, want %v", newCall.args, expectedNewArgs)
 	}
-	expectedArgs := []string{"new", "-m", "Test change"}
-	if !slicesEqual(call.args, expectedArgs) {
-		t.Errorf("Call 1 args = %v, want %v", call.args, expectedArgs)
+
+	// Verify the second call (log)
+	logCall := mock.calls[1]
+	expectedLogArgs := []string{"log", "-r", "@", "-T", "change_id", "--no-graph"}
+	if !slices.Equal(logCall.args, expectedLogArgs) {
+		t.Errorf("NewChange() log call args = %v, want %v", logCall.args, expectedLogArgs)
 	}
-	if call.dir != "/test/dir" {
-		t.Errorf("Call 1 dir = %q, want %q", call.dir, "/test/dir")
+}
+
+func TestNewChange_EmptyDescription(t *testing.T) {
+	mock := newMockRunner()
+	// First call: jj new --no-edit (no -m flag)
+	mock.addResponse("", "", nil)
+	// Second call: jj log -r @ -T change_id --no-graph
+	mock.addResponse("abc123", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	changeID, err := client.NewChange(context.Background(), "")
+	if err != nil {
+		t.Fatalf("NewChange() returned error: %v", err)
+	}
+
+	if changeID != "abc123" {
+		t.Errorf("NewChange() changeID = %q, want %q", changeID, "abc123")
+	}
+
+	// Verify the new command has no -m flag
+	newCall := mock.calls[0]
+	expectedNewArgs := []string{"new", "--no-edit"}
+	if !slices.Equal(newCall.args, expectedNewArgs) {
+		t.Errorf("NewChange() new call args = %v, want %v", newCall.args, expectedNewArgs)
 	}
 }
 
 func TestNewChange_Error(t *testing.T) {
 	mock := newMockRunner()
-	mock.addResponse("", "Error: not a jj repository", errors.New("exit status 1"))
+	mock.addResponse("", "Error: failed", errors.New("exit status 1"))
 
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
@@ -139,59 +227,6 @@ func TestNewChange_Error(t *testing.T) {
 	_, err := client.NewChange(context.Background(), "Test")
 	if err == nil {
 		t.Fatal("NewChange() should return error")
-	}
-}
-
-// =============================================================================
-// Unit Tests - Show
-// =============================================================================
-
-func TestShow(t *testing.T) {
-	mock := newMockRunner()
-	expectedDiff := `diff --git a/file.txt b/file.txt
---- a/file.txt
-+++ b/file.txt
-@@ -1 +1 @@
--old
-+new`
-	mock.addResponse(expectedDiff, "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	output, err := client.Show(context.Background())
-	if err != nil {
-		t.Fatalf("Show() returned error: %v", err)
-	}
-
-	if output != expectedDiff {
-		t.Errorf("Show() output = %q, want %q", output, expectedDiff)
-	}
-
-	// Verify the call
-	if len(mock.calls) != 1 {
-		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
-	}
-	call := mock.calls[0]
-	if call.name != "jj" || !slicesEqual(call.args, []string{"show"}) {
-		t.Errorf("Show() called %q %v, want jj [show]", call.name, call.args)
-	}
-}
-
-func TestShow_EmptyDiff(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	output, err := client.Show(context.Background())
-	if err != nil {
-		t.Fatalf("Show() returned error: %v", err)
-	}
-
-	if output != "" {
-		t.Errorf("Show() output = %q, want empty string", output)
 	}
 }
 
@@ -206,7 +241,7 @@ func TestDescribe(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	err := client.Describe(context.Background(), "Updated description")
+	err := client.Describe(context.Background(), "New description")
 	if err != nil {
 		t.Fatalf("Describe() returned error: %v", err)
 	}
@@ -215,16 +250,37 @@ func TestDescribe(t *testing.T) {
 	if len(mock.calls) != 1 {
 		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
 	}
+
 	call := mock.calls[0]
-	expectedArgs := []string{"describe", "-m", "Updated description"}
-	if call.name != "jj" || !slicesEqual(call.args, expectedArgs) {
-		t.Errorf("Describe() called %q %v, want jj %v", call.name, call.args, expectedArgs)
+	expectedArgs := []string{"describe", "-m", "New description"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Describe() called with args %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestDescribe_EmptyMessage(t *testing.T) {
+	mock := newMockRunner()
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.Describe(context.Background(), "")
+	if err == nil {
+		t.Fatal("Describe() should return error for empty message")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("Describe() error = %q, want error about empty description", err)
+	}
+
+	// Should not have made any calls
+	if len(mock.calls) != 0 {
+		t.Errorf("Expected 0 calls, got %d", len(mock.calls))
 	}
 }
 
 func TestDescribe_Error(t *testing.T) {
 	mock := newMockRunner()
-	mock.addResponse("", "Error: cannot describe immutable commit", errors.New("exit status 1"))
+	mock.addResponse("", "Error: describe failed", errors.New("exit status 1"))
 
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
@@ -236,49 +292,202 @@ func TestDescribe_Error(t *testing.T) {
 }
 
 // =============================================================================
-// Unit Tests - CurrentChangeID
+// Unit Tests - Show
 // =============================================================================
 
-func TestCurrentChangeID(t *testing.T) {
+func TestShow(t *testing.T) {
 	mock := newMockRunner()
-	mock.addResponse("xyzzlmkqr\n", "", nil)
+	expectedOutput := "diff --git a/file.txt b/file.txt\n+new line"
+	mock.addResponse(expectedOutput, "", nil)
 
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	changeID, err := client.CurrentChangeID(context.Background())
+	output, err := client.Show(context.Background())
 	if err != nil {
-		t.Fatalf("CurrentChangeID() returned error: %v", err)
+		t.Fatalf("Show() returned error: %v", err)
 	}
 
-	if changeID != "xyzzlmkqr" {
-		t.Errorf("CurrentChangeID() = %q, want %q", changeID, "xyzzlmkqr")
+	if output != expectedOutput {
+		t.Errorf("Show() output = %q, want %q", output, expectedOutput)
 	}
 
 	// Verify the call
 	if len(mock.calls) != 1 {
 		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
 	}
+
 	call := mock.calls[0]
-	expectedArgs := []string{"log", "-r", "@", "-T", "change_id", "--no-graph"}
-	if call.name != "jj" || !slicesEqual(call.args, expectedArgs) {
-		t.Errorf("CurrentChangeID() called %q %v, want jj %v", call.name, call.args, expectedArgs)
+	expectedArgs := []string{"show"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Show() called with args %v, want %v", call.args, expectedArgs)
 	}
 }
 
-func TestCurrentChangeID_EmptyOutput(t *testing.T) {
+func TestShow_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: show failed", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.Show(context.Background())
+	if err == nil {
+		t.Fatal("Show() should return error")
+	}
+}
+
+// =============================================================================
+// Unit Tests - Commit
+// =============================================================================
+
+func TestCommit(t *testing.T) {
 	mock := newMockRunner()
 	mock.addResponse("", "", nil)
 
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	_, err := client.CurrentChangeID(context.Background())
-	if err == nil {
-		t.Fatal("CurrentChangeID() should return error for empty output")
+	err := client.Commit(context.Background(), "Test commit message")
+	if err != nil {
+		t.Fatalf("Commit() returned error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unable to determine current change ID") {
-		t.Errorf("CurrentChangeID() error = %q, want error about unable to determine change ID", err)
+
+	// Verify the call
+	if len(mock.calls) != 1 {
+		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	if call.name != "jj" {
+		t.Errorf("Call name = %q, want %q", call.name, "jj")
+	}
+	expectedArgs := []string{"commit", "-m", "Test commit message"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Call args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestCommit_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: commit failed", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.Commit(context.Background(), "Test")
+	if err == nil {
+		t.Fatal("Commit() should return error")
+	}
+}
+
+func TestCommit_EmptyMessage(t *testing.T) {
+	mock := newMockRunner()
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.Commit(context.Background(), "")
+	if err == nil {
+		t.Fatal("Commit() should return error for empty message")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("Commit() error = %q, want error about empty message", err)
+	}
+
+	// Should not have made any calls
+	if len(mock.calls) != 0 {
+		t.Errorf("Expected 0 calls, got %d", len(mock.calls))
+	}
+}
+
+func TestCommit_WhitespaceOnlyMessage(t *testing.T) {
+	mock := newMockRunner()
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.Commit(context.Background(), "   \n\t  ")
+	if err == nil {
+		t.Fatal("Commit() should return error for whitespace-only message")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("Commit() error = %q, want error about empty message", err)
+	}
+}
+
+func TestCommit_NotRepo(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: There is no jj repo in \"/test\"", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	err := client.Commit(context.Background(), "Test")
+	if !errors.Is(err, ErrNotRepo) {
+		t.Errorf("Commit() error = %v, want ErrNotRepo", err)
+	}
+}
+
+// =============================================================================
+// Unit Tests - Sanitize Message
+// =============================================================================
+
+func TestSanitizeMessage(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "normal message",
+			input:    "Fix bug in parser",
+			expected: "Fix bug in parser",
+		},
+		{
+			name:     "message with leading/trailing whitespace",
+			input:    "  Fix bug  ",
+			expected: "Fix bug",
+		},
+		{
+			name:     "message with null bytes",
+			input:    "Fix bug\x00 in parser",
+			expected: "Fix bug in parser",
+		},
+		{
+			name:     "message with newlines",
+			input:    "Fix bug\n\nWith details",
+			expected: "Fix bug\n\nWith details",
+		},
+		{
+			name:     "message with quotes",
+			input:    `Fix "important" bug`,
+			expected: `Fix "important" bug`,
+		},
+		{
+			name:     "message with special chars",
+			input:    "Fix bug ($variable)",
+			expected: "Fix bug ($variable)",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "only whitespace",
+			input:    "   \t\n  ",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeMessage(tt.input)
+			if result != tt.expected {
+				t.Errorf("sanitizeMessage(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
 	}
 }
 
@@ -302,27 +511,12 @@ func TestStatus(t *testing.T) {
 	if output != expectedOutput {
 		t.Errorf("Status() output = %q, want %q", output, expectedOutput)
 	}
-}
 
-// =============================================================================
-// Unit Tests - Diff
-// =============================================================================
-
-func TestDiff(t *testing.T) {
-	mock := newMockRunner()
-	expectedDiff := "diff content here"
-	mock.addResponse(expectedDiff, "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	output, err := client.Diff(context.Background())
-	if err != nil {
-		t.Fatalf("Diff() returned error: %v", err)
-	}
-
-	if output != expectedDiff {
-		t.Errorf("Diff() output = %q, want %q", output, expectedDiff)
+	// Verify the call
+	call := mock.calls[0]
+	expectedArgs := []string{"status"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Status() called with args %v, want %v", call.args, expectedArgs)
 	}
 }
 
@@ -337,7 +531,7 @@ func TestLog(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	output, err := client.Log(context.Background(), "@", "description")
+	output, err := client.Log(context.Background(), "@", "")
 	if err != nil {
 		t.Fatalf("Log() returned error: %v", err)
 	}
@@ -348,8 +542,8 @@ func TestLog(t *testing.T) {
 
 	// Verify the call
 	call := mock.calls[0]
-	expectedArgs := []string{"log", "-r", "@", "-T", "description"}
-	if !slicesEqual(call.args, expectedArgs) {
+	expectedArgs := []string{"log", "-r", "@"}
+	if !slices.Equal(call.args, expectedArgs) {
 		t.Errorf("Log() called with args %v, want %v", call.args, expectedArgs)
 	}
 }
@@ -366,10 +560,34 @@ func TestLog_NoRevset(t *testing.T) {
 		t.Fatalf("Log() returned error: %v", err)
 	}
 
-	// Verify the call has no -r or -T flags
+	// Verify the call has no -r flag
 	call := mock.calls[0]
 	expectedArgs := []string{"log"}
-	if !slicesEqual(call.args, expectedArgs) {
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("Log() called with args %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestLog_WithTemplate(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("change_id123", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	output, err := client.Log(context.Background(), "@", "change_id")
+	if err != nil {
+		t.Fatalf("Log() returned error: %v", err)
+	}
+
+	if output != "change_id123" {
+		t.Errorf("Log() output = %q, want %q", output, "change_id123")
+	}
+
+	// Verify the call includes both -r and -T flags
+	call := mock.calls[0]
+	expectedArgs := []string{"log", "-r", "@", "-T", "change_id"}
+	if !slices.Equal(call.args, expectedArgs) {
 		t.Errorf("Log() called with args %v, want %v", call.args, expectedArgs)
 	}
 }
@@ -385,9 +603,9 @@ func TestWrapError_CommandNotFound(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	_, err := client.Show(context.Background())
+	err := client.New(context.Background())
 	if !errors.Is(err, ErrCommandNotFound) {
-		t.Errorf("Show() error = %v, want ErrCommandNotFound", err)
+		t.Errorf("New() error = %v, want ErrCommandNotFound", err)
 	}
 }
 
@@ -406,9 +624,9 @@ func TestWrapError_NotRepo(t *testing.T) {
 			client := NewClient("/test/dir")
 			client.SetCommandRunner(mock.run)
 
-			_, err := client.Show(context.Background())
+			err := client.New(context.Background())
 			if !errors.Is(err, ErrNotRepo) {
-				t.Errorf("Show() error = %v, want ErrNotRepo", err)
+				t.Errorf("New() error = %v, want ErrNotRepo", err)
 			}
 		})
 	}
@@ -421,9 +639,9 @@ func TestWrapError_ContextCanceled(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	_, err := client.Show(context.Background())
+	err := client.New(context.Background())
 	if !errors.Is(err, context.Canceled) {
-		t.Errorf("Show() error = %v, want context.Canceled", err)
+		t.Errorf("New() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -434,9 +652,9 @@ func TestWrapError_ContextDeadlineExceeded(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	_, err := client.Show(context.Background())
+	err := client.New(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("Show() error = %v, want context.DeadlineExceeded", err)
+		t.Errorf("New() error = %v, want context.DeadlineExceeded", err)
 	}
 }
 
@@ -447,15 +665,15 @@ func TestWrapError_GenericError(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	_, err := client.Show(context.Background())
+	err := client.New(context.Background())
 	if err == nil {
-		t.Fatal("Show() should return error")
+		t.Fatal("New() should return error")
 	}
-	if !strings.Contains(err.Error(), "jj show failed") {
-		t.Errorf("Show() error = %q, want error containing 'jj show failed'", err)
+	if !strings.Contains(err.Error(), "jj new failed") {
+		t.Errorf("New() error = %q, want error containing 'jj new failed'", err)
 	}
 	if !strings.Contains(err.Error(), "Some error message") {
-		t.Errorf("Show() error = %q, want error containing 'Some error message'", err)
+		t.Errorf("New() error = %q, want error containing 'Some error message'", err)
 	}
 }
 
@@ -479,7 +697,7 @@ func TestIntegration_BasicWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 
 	// Initialize a git repo first (jj needs a backend)
 	gitInit := exec.Command("git", "init")
@@ -511,63 +729,51 @@ func TestIntegration_BasicWorkflow(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient(tempDir)
 
-	// Test CurrentChangeID
-	changeID, err := client.CurrentChangeID(ctx)
-	if err != nil {
-		t.Fatalf("CurrentChangeID() failed: %v", err)
-	}
-	if changeID == "" {
-		t.Error("CurrentChangeID() returned empty string")
-	}
-
 	// Test Status
 	status, err := client.Status(ctx)
 	if err != nil {
 		t.Fatalf("Status() failed: %v", err)
 	}
-	// Status should return something (even if just working copy info)
-	_ = status
+	_ = status // Status should return something
 
-	// Create a file and test Show
+	// Create a file
 	testFile := filepath.Join(tempDir, "test.txt")
 	if err := os.WriteFile(testFile, []byte("hello world\n"), 0644); err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	show, err := client.Show(ctx)
+	// Test Commit
+	err = client.Commit(ctx, "Add test file")
 	if err != nil {
-		t.Fatalf("Show() failed: %v", err)
-	}
-	// Show should include the new file
-	if !strings.Contains(show, "test.txt") {
-		t.Errorf("Show() output should contain test.txt, got: %s", show)
+		t.Fatalf("Commit() failed: %v", err)
 	}
 
-	// Test Describe
-	err = client.Describe(ctx, "Test description")
+	// Test New
+	err = client.New(ctx)
 	if err != nil {
-		t.Fatalf("Describe() failed: %v", err)
+		t.Fatalf("New() failed: %v", err)
 	}
 
-	// Test NewChange
-	newChangeID, err := client.NewChange(ctx, "New change for testing")
-	if err != nil {
-		t.Fatalf("NewChange() failed: %v", err)
-	}
-	if newChangeID == "" {
-		t.Error("NewChange() returned empty change ID")
-	}
-	if newChangeID == changeID {
-		t.Error("NewChange() should create a different change ID")
+	// Create another file
+	testFile2 := filepath.Join(tempDir, "test2.txt")
+	if err := os.WriteFile(testFile2, []byte("second file\n"), 0644); err != nil {
+		t.Fatalf("Failed to create second test file: %v", err)
 	}
 
-	// Verify we're now on the new change
-	currentID, err := client.CurrentChangeID(ctx)
+	// Test another Commit
+	err = client.Commit(ctx, "Add second test file")
 	if err != nil {
-		t.Fatalf("CurrentChangeID() failed after NewChange: %v", err)
+		t.Fatalf("Second Commit() failed: %v", err)
 	}
-	if currentID != newChangeID {
-		t.Errorf("CurrentChangeID() = %q, want %q", currentID, newChangeID)
+
+	// Test Log
+	logOutput, err := client.Log(ctx, "", "")
+	if err != nil {
+		t.Fatalf("Log() failed: %v", err)
+	}
+	// Log should contain our commit messages
+	if !strings.Contains(logOutput, "test file") {
+		t.Errorf("Log() output should contain commit messages, got: %s", logOutput)
 	}
 }
 
@@ -581,17 +787,16 @@ func TestIntegration_NotRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 
 	ctx := context.Background()
 	client := NewClient(tempDir)
 
-	_, err = client.Show(ctx)
+	err = client.New(ctx)
 	if err == nil {
-		t.Fatal("Show() should fail in non-jj directory")
+		t.Fatal("New() should fail in non-jj directory")
 	}
 	if !errors.Is(err, ErrNotRepo) {
-		// The error message might vary, but it should indicate repo issue
 		t.Logf("Error (expected ErrNotRepo or similar): %v", err)
 	}
 }
@@ -606,7 +811,7 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 
 	// Initialize git and jj
 	gitInit := exec.Command("git", "init")
@@ -627,9 +832,9 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 
 	client := NewClient(tempDir)
 
-	_, err = client.Show(ctx)
+	err = client.New(ctx)
 	if err == nil {
-		t.Fatal("Show() should fail with cancelled context")
+		t.Fatal("New() should fail with cancelled context")
 	}
 	// The error might be context.Canceled or a wrapped error
 	if !errors.Is(err, context.Canceled) {
@@ -647,7 +852,7 @@ func TestIntegration_ContextTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
-	defer os.RemoveAll(tempDir)
+	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
 
 	// Initialize git and jj
 	gitInit := exec.Command("git", "init")
@@ -662,33 +867,15 @@ func TestIntegration_ContextTimeout(t *testing.T) {
 		t.Fatalf("Failed to initialize jj repo: %v", err)
 	}
 
-	// Create a context with a very short timeout
-	// Note: jj commands are usually fast, so this might actually succeed
-	// We're just testing that timeout is respected
+	// Create a context with a reasonable timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	client := NewClient(tempDir)
 
 	// This should succeed within the timeout
-	_, err = client.CurrentChangeID(ctx)
+	err = client.New(ctx)
 	if err != nil {
-		t.Logf("CurrentChangeID() with timeout: %v", err)
+		t.Logf("New() with timeout: %v", err)
 	}
-}
-
-// =============================================================================
-// Helper Functions
-// =============================================================================
-
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }

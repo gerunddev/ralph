@@ -15,11 +15,12 @@ const defaultConfigPath = "~/.config/ralph/config.json"
 
 // Config holds all Ralph configuration settings.
 type Config struct {
-	DatabasePath        string       `json:"database_path"`         // Deprecated: Use ProjectsDir instead
-	ProjectsDir         string       `json:"projects_dir"`          // Base directory for per-project databases
-	MaxReviewIterations int          `json:"max_review_iterations"`
+	DatabasePath        string       `json:"database_path"`      // Deprecated: Use ProjectsDir instead
+	ProjectsDir         string       `json:"projects_dir"`       // Base directory for per-project databases
+	MaxIterations       int          `json:"max_iterations"`     // Max review iterations (new name)
+	MaxReviewIterations int          `json:"max_review_iterations"` // Deprecated: use max_iterations
 	MaxTaskAttempts     int          `json:"max_task_attempts"`
-	DefaultPauseMode    bool         `json:"default_pause_mode"`    // Whether to pause between tasks by default
+	DefaultPauseMode    bool         `json:"default_pause_mode"` // Whether to pause between tasks by default
 	Claude              ClaudeConfig `json:"claude"`
 	Agents              AgentConfig  `json:"agents"`
 
@@ -29,9 +30,9 @@ type Config struct {
 
 // ClaudeConfig holds Claude-specific configuration.
 type ClaudeConfig struct {
-	Model        string  `json:"model"`
-	MaxTurns     int     `json:"max_turns"`
-	MaxBudgetUSD float64 `json:"max_budget_usd"`
+	Model    string `json:"model"`
+	MaxTurns int    `json:"max_turns"`
+	Verbose  bool   `json:"verbose"`
 }
 
 // AgentConfig holds paths to custom agent prompts.
@@ -47,12 +48,13 @@ func DefaultConfig() *Config {
 	return &Config{
 		DatabasePath:        "~/.local/share/ralph/ralph.db", // Deprecated
 		ProjectsDir:         "~/.local/share/ralph/projects",
-		MaxReviewIterations: 5,
+		MaxIterations:       15,
+		MaxReviewIterations: 15,
 		MaxTaskAttempts:     10,
 		Claude: ClaudeConfig{
-			Model:        "opus",
-			MaxTurns:     50,
-			MaxBudgetUSD: 10.0,
+			Model:    "opus",
+			MaxTurns: 50,
+			Verbose:  true,
 		},
 		Agents: AgentConfig{},
 	}
@@ -117,6 +119,7 @@ func LoadFromPath(path string) (*Config, error) {
 type fileConfig struct {
 	DatabasePath        *string           `json:"database_path"`
 	ProjectsDir         *string           `json:"projects_dir"`
+	MaxIterations       *int              `json:"max_iterations"`
 	MaxReviewIterations *int              `json:"max_review_iterations"`
 	MaxTaskAttempts     *int              `json:"max_task_attempts"`
 	DefaultPauseMode    *bool             `json:"default_pause_mode"`
@@ -125,9 +128,9 @@ type fileConfig struct {
 }
 
 type fileClaudeConfig struct {
-	Model        *string  `json:"model"`
-	MaxTurns     *int     `json:"max_turns"`
-	MaxBudgetUSD *float64 `json:"max_budget_usd"`
+	Model    *string `json:"model"`
+	MaxTurns *int    `json:"max_turns"`
+	Verbose  *bool   `json:"verbose"`
 }
 
 type fileAgentConfig struct {
@@ -146,8 +149,13 @@ func mergeConfig(cfg *Config, fileCfg *fileConfig) {
 	if fileCfg.ProjectsDir != nil {
 		cfg.ProjectsDir = *fileCfg.ProjectsDir
 	}
+	if fileCfg.MaxIterations != nil {
+		cfg.MaxIterations = *fileCfg.MaxIterations
+		cfg.MaxReviewIterations = *fileCfg.MaxIterations // Keep in sync
+	}
 	if fileCfg.MaxReviewIterations != nil {
 		cfg.MaxReviewIterations = *fileCfg.MaxReviewIterations
+		cfg.MaxIterations = *fileCfg.MaxReviewIterations // Keep in sync
 	}
 	if fileCfg.MaxTaskAttempts != nil {
 		cfg.MaxTaskAttempts = *fileCfg.MaxTaskAttempts
@@ -163,8 +171,8 @@ func mergeConfig(cfg *Config, fileCfg *fileConfig) {
 		if fileCfg.Claude.MaxTurns != nil {
 			cfg.Claude.MaxTurns = *fileCfg.Claude.MaxTurns
 		}
-		if fileCfg.Claude.MaxBudgetUSD != nil {
-			cfg.Claude.MaxBudgetUSD = *fileCfg.Claude.MaxBudgetUSD
+		if fileCfg.Claude.Verbose != nil {
+			cfg.Claude.Verbose = *fileCfg.Claude.Verbose
 		}
 	}
 
@@ -188,8 +196,8 @@ func mergeConfig(cfg *Config, fileCfg *fileConfig) {
 func (c *Config) Validate() error {
 	var errs []error
 
-	if c.MaxReviewIterations < 1 {
-		errs = append(errs, errors.New("max_review_iterations must be >= 1"))
+	if c.MaxIterations < 1 {
+		errs = append(errs, errors.New("max_iterations must be >= 1"))
 	}
 
 	if c.MaxTaskAttempts < 1 {
@@ -202,10 +210,6 @@ func (c *Config) Validate() error {
 
 	if c.Claude.MaxTurns < 1 {
 		errs = append(errs, errors.New("claude.max_turns must be >= 1"))
-	}
-
-	if c.Claude.MaxBudgetUSD <= 0 {
-		errs = append(errs, errors.New("claude.max_budget_usd must be > 0"))
 	}
 
 	// Validate agent prompt paths if set.
@@ -331,6 +335,27 @@ func (c *Config) GetAgentPrompt(agentType string) (string, error) {
 
 	// Return empty string - caller should use embedded default.
 	return "", nil
+}
+
+// EnsureConfigDir creates the config directory if it doesn't exist.
+// Returns the path to the config directory.
+func EnsureConfigDir() (string, error) {
+	configPath, err := expandPath(defaultConfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to expand config path: %w", err)
+	}
+
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	return configDir, nil
+}
+
+// GetConfigPath returns the default config file path (expanded).
+func GetConfigPath() (string, error) {
+	return expandPath(defaultConfigPath)
 }
 
 // expandPath expands ~ to the user's home directory.

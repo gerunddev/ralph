@@ -72,6 +72,68 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(session_id);
+
+-- V2 Schema: Plans table (simplified from V1 projects)
+CREATE TABLE IF NOT EXISTS plans (
+    id TEXT PRIMARY KEY,
+    origin_path TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at DATETIME NOT NULL,
+    updated_at DATETIME NOT NULL
+);
+
+-- V2 Schema: Sessions linked directly to plans
+CREATE TABLE IF NOT EXISTS plan_sessions (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    iteration INTEGER NOT NULL,
+    input_prompt TEXT NOT NULL,
+    final_output TEXT,
+    status TEXT NOT NULL DEFAULT 'running',
+    created_at DATETIME NOT NULL,
+    completed_at DATETIME,
+    FOREIGN KEY (plan_id) REFERENCES plans(id)
+);
+
+-- V2 Schema: Events (stream events from Claude)
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
+);
+
+-- V2 Schema: Progress tracking
+CREATE TABLE IF NOT EXISTS progress (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
+    FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
+);
+
+-- V2 Schema: Learnings tracking
+CREATE TABLE IF NOT EXISTS learnings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
+    FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
+);
+
+-- V2 Indexes
+CREATE INDEX IF NOT EXISTS idx_plan_sessions_plan ON plan_sessions(plan_id);
+CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
+CREATE INDEX IF NOT EXISTS idx_progress_plan ON progress(plan_id);
+CREATE INDEX IF NOT EXISTS idx_learnings_plan ON learnings(plan_id);
 `
 
 // Migrate runs all database migrations to ensure the schema is up to date.

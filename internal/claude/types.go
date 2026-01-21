@@ -11,6 +11,8 @@ const (
 	EventInit EventType = "init"
 	// EventMessage contains assistant message content.
 	EventMessage EventType = "message"
+	// EventAssistantText contains streaming assistant text (partial messages).
+	EventAssistantText EventType = "assistant_text"
 	// EventToolUse indicates Claude is calling a tool.
 	EventToolUse EventType = "tool_use"
 	// EventToolResult contains the result of a tool call.
@@ -25,15 +27,16 @@ const (
 
 // StreamEvent represents a parsed event from Claude's stream-JSON output.
 type StreamEvent struct {
-	Type       EventType
-	Raw        []byte          // Original JSON for storage
-	Init       *InitContent    // For init events
-	Message    *MessageContent // For message events
-	ToolUse    *ToolUseContent // For tool_use events
-	ToolResult *ToolResultContent
-	Result     *ResultContent // For result events
-	Error      *ErrorContent
-	System     *SystemContent // For system events
+	Type          EventType
+	Raw           []byte                // Original JSON for storage
+	Init          *InitContent          // For init events
+	Message       *MessageContent       // For message events
+	AssistantText *AssistantTextContent // For streaming assistant text (partial messages)
+	ToolUse       *ToolUseContent       // For tool_use events
+	ToolResult    *ToolResultContent
+	Result        *ResultContent // For result events
+	Error         *ErrorContent
+	System        *SystemContent // For system events
 }
 
 // InitContent contains initialization information for a session.
@@ -41,8 +44,8 @@ type InitContent struct {
 	SessionID  string `json:"session_id"`
 	Model      string `json:"model"`
 	CWD        string `json:"cwd"`
-	Tools      int    `json:"tools"`
-	MCPServers int    `json:"mcp_servers"`
+	Tools      int    `json:"tools"`       // Count of tools available
+	MCPServers int    `json:"mcp_servers"` // Count of MCP servers
 }
 
 // MessageContent contains the content of an assistant message.
@@ -53,6 +56,11 @@ type MessageContent struct {
 	Text       string // Extracted text content
 	StopReason string `json:"stop_reason"`
 	Usage      Usage  `json:"usage"`
+}
+
+// AssistantTextContent contains streaming assistant text from partial messages.
+type AssistantTextContent struct {
+	Text string `json:"text"` // The text delta/chunk
 }
 
 // Usage contains token usage information.
@@ -107,14 +115,17 @@ type rawEvent struct {
 	Type string `json:"type"`
 
 	// Init event fields
-	SessionID  string `json:"session_id"`
-	Model      string `json:"model"`
-	CWD        string `json:"cwd"`
-	Tools      int    `json:"tools"`
-	MCPServers int    `json:"mcp_servers"`
+	SessionID  string          `json:"session_id"`
+	Model      string          `json:"model"`
+	CWD        string          `json:"cwd"`
+	Tools      json.RawMessage `json:"tools"`       // Can be int or array
+	MCPServers json.RawMessage `json:"mcp_servers"` // Can be int or array
 
 	// Message event - contains the full message object
 	Message *rawMessage `json:"message"`
+
+	// Partial message / streaming text fields (from --include-partial-messages)
+	ContentBlockDelta *rawContentBlockDelta `json:"content_block_delta"`
 
 	// Result event fields
 	CostUSD     float64 `json:"cost_usd"`
@@ -130,6 +141,16 @@ type rawEvent struct {
 
 	// System event fields
 	SubType string `json:"subtype"`
+}
+
+// rawContentBlockDelta represents streaming content block delta.
+type rawContentBlockDelta struct {
+	Type  string `json:"type"`
+	Text  string `json:"text"`
+	Delta *struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"delta"`
 }
 
 // rawMessage represents the message object in Claude's output.

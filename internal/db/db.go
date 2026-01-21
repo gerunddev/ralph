@@ -697,3 +697,363 @@ func (d *DB) UpdateTaskDescription(taskID string, description string) error {
 	}
 	return nil
 }
+
+// =============================================================================
+// V2 Plan Methods
+// =============================================================================
+
+// CreatePlan inserts a new plan into the database.
+func (d *DB) CreatePlan(plan *Plan) error {
+	now := time.Now()
+	plan.CreatedAt = now
+	plan.UpdatedAt = now
+	if plan.Status == "" {
+		plan.Status = PlanStatusPending
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO plans (id, origin_path, content, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		plan.ID, plan.OriginPath, plan.Content, plan.Status, plan.CreatedAt, plan.UpdatedAt,
+	)
+	return err
+}
+
+// GetPlan retrieves a plan by ID.
+func (d *DB) GetPlan(id string) (*Plan, error) {
+	plan := &Plan{}
+	err := d.conn.QueryRow(`
+		SELECT id, origin_path, content, status, created_at, updated_at
+		FROM plans WHERE id = ?`, id,
+	).Scan(
+		&plan.ID, &plan.OriginPath, &plan.Content, &plan.Status,
+		&plan.CreatedAt, &plan.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// UpdatePlanStatus updates a plan's status and updated_at timestamp.
+func (d *DB) UpdatePlanStatus(id string, status PlanStatus) error {
+	result, err := d.conn.Exec(`
+		UPDATE plans SET status = ?, updated_at = ? WHERE id = ?`,
+		status, time.Now(), id,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// =============================================================================
+// V2 Plan Session Methods
+// =============================================================================
+
+// CreatePlanSession inserts a new plan session into the database.
+func (d *DB) CreatePlanSession(session *PlanSession) error {
+	session.CreatedAt = time.Now()
+	if session.Status == "" {
+		session.Status = PlanSessionRunning
+	}
+
+	_, err := d.conn.Exec(`
+		INSERT INTO plan_sessions (id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		session.ID, session.PlanID, session.Iteration, session.InputPrompt,
+		session.FinalOutput, session.Status, session.CreatedAt, session.CompletedAt,
+	)
+	return err
+}
+
+// GetPlanSession retrieves a plan session by ID.
+func (d *DB) GetPlanSession(id string) (*PlanSession, error) {
+	session := &PlanSession{}
+	err := d.conn.QueryRow(`
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		FROM plan_sessions WHERE id = ?`, id,
+	).Scan(
+		&session.ID, &session.PlanID, &session.Iteration, &session.InputPrompt,
+		&session.FinalOutput, &session.Status, &session.CreatedAt, &session.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// CompletePlanSession marks a plan session as completed with the given status and output.
+func (d *DB) CompletePlanSession(id string, status PlanSessionStatus, finalOutput string) error {
+	now := time.Now()
+	result, err := d.conn.Exec(`
+		UPDATE plan_sessions SET status = ?, final_output = ?, completed_at = ? WHERE id = ?`,
+		status, finalOutput, now, id,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// GetPlanSessionsByPlan returns all sessions for a plan ordered by iteration.
+func (d *DB) GetPlanSessionsByPlan(planID string) ([]*PlanSession, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		FROM plan_sessions WHERE plan_id = ? ORDER BY iteration`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Warn("failed to close rows", "operation", "GetPlanSessionsByPlan", "error", closeErr)
+		}
+	}()
+
+	var sessions []*PlanSession
+	for rows.Next() {
+		s := &PlanSession{}
+		if err := rows.Scan(
+			&s.ID, &s.PlanID, &s.Iteration, &s.InputPrompt,
+			&s.FinalOutput, &s.Status, &s.CreatedAt, &s.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, s)
+	}
+	return sessions, rows.Err()
+}
+
+// GetLatestPlanSession returns the most recent session for a plan.
+func (d *DB) GetLatestPlanSession(planID string) (*PlanSession, error) {
+	session := &PlanSession{}
+	err := d.conn.QueryRow(`
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		FROM plan_sessions WHERE plan_id = ? ORDER BY iteration DESC LIMIT 1`, planID,
+	).Scan(
+		&session.ID, &session.PlanID, &session.Iteration, &session.InputPrompt,
+		&session.FinalOutput, &session.Status, &session.CreatedAt, &session.CompletedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // Return nil, not error, when no records exist
+	}
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+// =============================================================================
+// V2 Event Methods
+// =============================================================================
+
+// CreateEvent inserts a new event into the database.
+func (d *DB) CreateEvent(event *Event) error {
+	event.CreatedAt = time.Now()
+
+	result, err := d.conn.Exec(`
+		INSERT INTO events (session_id, sequence, event_type, raw_json, created_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		event.SessionID, event.Sequence, event.EventType, event.RawJSON, event.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	event.ID = id
+	return nil
+}
+
+// GetEventsBySession returns all events for a session ordered by sequence.
+func (d *DB) GetEventsBySession(sessionID string) ([]*Event, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, session_id, sequence, event_type, raw_json, created_at
+		FROM events WHERE session_id = ? ORDER BY sequence`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Warn("failed to close rows", "operation", "GetEventsBySession", "error", closeErr)
+		}
+	}()
+
+	var events []*Event
+	for rows.Next() {
+		e := &Event{}
+		if err := rows.Scan(
+			&e.ID, &e.SessionID, &e.Sequence, &e.EventType,
+			&e.RawJSON, &e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+// =============================================================================
+// V2 Progress Methods
+// =============================================================================
+
+// CreateProgress inserts a new progress record into the database.
+func (d *DB) CreateProgress(progress *Progress) error {
+	progress.CreatedAt = time.Now()
+
+	result, err := d.conn.Exec(`
+		INSERT INTO progress (plan_id, session_id, content, created_at)
+		VALUES (?, ?, ?, ?)`,
+		progress.PlanID, progress.SessionID, progress.Content, progress.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	progress.ID = id
+	return nil
+}
+
+// GetLatestProgress returns the most recent progress for a plan.
+func (d *DB) GetLatestProgress(planID string) (*Progress, error) {
+	progress := &Progress{}
+	err := d.conn.QueryRow(`
+		SELECT id, plan_id, session_id, content, created_at
+		FROM progress WHERE plan_id = ? ORDER BY created_at DESC LIMIT 1`, planID,
+	).Scan(
+		&progress.ID, &progress.PlanID, &progress.SessionID,
+		&progress.Content, &progress.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // Return nil, not error, when no records exist
+	}
+	if err != nil {
+		return nil, err
+	}
+	return progress, nil
+}
+
+// GetProgressHistory returns all progress records for a plan ordered by created_at.
+func (d *DB) GetProgressHistory(planID string) ([]*Progress, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, plan_id, session_id, content, created_at
+		FROM progress WHERE plan_id = ? ORDER BY created_at`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Warn("failed to close rows", "operation", "GetProgressHistory", "error", closeErr)
+		}
+	}()
+
+	var progressList []*Progress
+	for rows.Next() {
+		p := &Progress{}
+		if err := rows.Scan(
+			&p.ID, &p.PlanID, &p.SessionID, &p.Content, &p.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		progressList = append(progressList, p)
+	}
+	return progressList, rows.Err()
+}
+
+// =============================================================================
+// V2 Learnings Methods
+// =============================================================================
+
+// CreateLearnings inserts a new learnings record into the database.
+func (d *DB) CreateLearnings(learnings *Learnings) error {
+	learnings.CreatedAt = time.Now()
+
+	result, err := d.conn.Exec(`
+		INSERT INTO learnings (plan_id, session_id, content, created_at)
+		VALUES (?, ?, ?, ?)`,
+		learnings.PlanID, learnings.SessionID, learnings.Content, learnings.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	learnings.ID = id
+	return nil
+}
+
+// GetLatestLearnings returns the most recent learnings for a plan.
+func (d *DB) GetLatestLearnings(planID string) (*Learnings, error) {
+	learnings := &Learnings{}
+	err := d.conn.QueryRow(`
+		SELECT id, plan_id, session_id, content, created_at
+		FROM learnings WHERE plan_id = ? ORDER BY created_at DESC LIMIT 1`, planID,
+	).Scan(
+		&learnings.ID, &learnings.PlanID, &learnings.SessionID,
+		&learnings.Content, &learnings.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // Return nil, not error, when no records exist
+	}
+	if err != nil {
+		return nil, err
+	}
+	return learnings, nil
+}
+
+// GetLearningsHistory returns all learnings records for a plan ordered by created_at.
+func (d *DB) GetLearningsHistory(planID string) ([]*Learnings, error) {
+	rows, err := d.conn.Query(`
+		SELECT id, plan_id, session_id, content, created_at
+		FROM learnings WHERE plan_id = ? ORDER BY created_at`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			log.Warn("failed to close rows", "operation", "GetLearningsHistory", "error", closeErr)
+		}
+	}()
+
+	var learningsList []*Learnings
+	for rows.Next() {
+		l := &Learnings{}
+		if err := rows.Scan(
+			&l.ID, &l.PlanID, &l.SessionID, &l.Content, &l.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		learningsList = append(learningsList, l)
+	}
+	return learningsList, rows.Err()
+}

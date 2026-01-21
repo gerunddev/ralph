@@ -22,7 +22,8 @@ import (
 )
 
 // engineEventChannelBufferSize is the buffer size for the engine event channel.
-const engineEventChannelBufferSize = 100
+// Large buffer needed to prevent dropping Claude streaming events.
+const engineEventChannelBufferSize = 10000
 
 // EngineEventType represents the type of engine event.
 type EngineEventType string
@@ -88,9 +89,9 @@ func NewEngine(cfg EngineConfig) (*Engine, error) {
 	}
 
 	claudeClient := claude.NewClient(claude.ClientConfig{
-		Model:        cfg.Config.Claude.Model,
-		MaxTurns:     cfg.Config.Claude.MaxTurns,
-		MaxBudgetUSD: cfg.Config.Claude.MaxBudgetUSD,
+		Model:    cfg.Config.Claude.Model,
+		MaxTurns: cfg.Config.Claude.MaxTurns,
+		Verbose:  cfg.Config.Claude.Verbose,
 	})
 
 	jjClient := jj.NewClient(cfg.WorkDir)
@@ -213,7 +214,7 @@ func (e *Engine) planTasks(ctx context.Context, project *db.Project) error {
 	}
 
 	// Run Claude with planner prompt
-	session, err := e.claude.Run(ctx, agent.Prompt, "")
+	session, err := e.claude.Run(ctx, agent.Prompt)
 	if err != nil {
 		return fmt.Errorf("failed to run planner: %w", err)
 	}
@@ -446,7 +447,7 @@ func (e *Engine) CaptureLearnings(ctx context.Context) error {
 	}
 
 	// Run Claude
-	session, err := e.claude.Run(ctx, agent.Prompt, "")
+	session, err := e.claude.Run(ctx, agent.Prompt)
 	if err != nil {
 		return fmt.Errorf("failed to run documenter: %w", err)
 	}

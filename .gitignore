@@ -1,2 +1,6 @@
 .claude/plans
 ralph
+
+# Test binaries
+*.test
+app.test

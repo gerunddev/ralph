@@ -7,86 +7,63 @@ import (
 	"testing"
 )
 
-func TestDefaultConfig(t *testing.T) {
-	cfg := DefaultConfig()
-
-	if cfg.DatabasePath != "~/.local/share/ralph/ralph.db" {
-		t.Errorf("expected default database path, got %s", cfg.DatabasePath)
+func TestLoadFromPath_MissingFile(t *testing.T) {
+	// Missing file should return default config (not an error)
+	cfg, err := LoadFromPath("/nonexistent/path/config.json")
+	if err != nil {
+		t.Fatalf("expected default config for missing file, got error: %v", err)
 	}
 
-	if cfg.ProjectsDir != "~/.local/share/ralph/projects" {
-		t.Errorf("expected default projects dir, got %s", cfg.ProjectsDir)
-	}
-
-	if cfg.MaxReviewIterations != 5 {
-		t.Errorf("expected max_review_iterations=5, got %d", cfg.MaxReviewIterations)
-	}
-
-	if cfg.MaxTaskAttempts != 10 {
-		t.Errorf("expected max_task_attempts=10, got %d", cfg.MaxTaskAttempts)
-	}
-
-	if cfg.DefaultPauseMode != false {
-		t.Errorf("expected default_pause_mode=false, got %v", cfg.DefaultPauseMode)
-	}
-
-	if cfg.Claude.Model != "opus" {
-		t.Errorf("expected model=opus, got %s", cfg.Claude.Model)
-	}
-
-	if cfg.Claude.MaxTurns != 50 {
-		t.Errorf("expected max_turns=50, got %d", cfg.Claude.MaxTurns)
-	}
-
-	if cfg.Claude.MaxBudgetUSD != 10.0 {
-		t.Errorf("expected max_budget_usd=10.0, got %f", cfg.Claude.MaxBudgetUSD)
-	}
-
-	if cfg.Agents.Developer != "" {
-		t.Errorf("expected empty developer path, got %s", cfg.Agents.Developer)
-	}
-
-	if cfg.Agents.Reviewer != "" {
-		t.Errorf("expected empty reviewer path, got %s", cfg.Agents.Reviewer)
-	}
-
-	if cfg.Agents.Planner != "" {
-		t.Errorf("expected empty planner path, got %s", cfg.Agents.Planner)
+	// Check defaults
+	if cfg.MaxIterations != 15 {
+		t.Errorf("expected default max_iterations=15, got %d", cfg.MaxIterations)
 	}
 }
 
-func TestLoadFromPath_MissingFile(t *testing.T) {
-	// Load from a non-existent path should return defaults.
-	cfg, err := LoadFromPath("/nonexistent/path/config.json")
+func TestLoadFromPath_ValidMinimalConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Minimal valid config with just max_iterations.
+	configJSON := `{"max_iterations": 20}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadFromPath(configPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should have default values with expanded paths.
-	if !strings.HasSuffix(cfg.DatabasePath, ".local/share/ralph/ralph.db") {
-		t.Errorf("expected expanded default database path, got %s", cfg.DatabasePath)
+	if cfg.MaxIterations != 20 {
+		t.Errorf("expected max_iterations=20, got %d", cfg.MaxIterations)
 	}
 
-	if !strings.HasSuffix(cfg.ProjectsDir, ".local/share/ralph/projects") {
-		t.Errorf("expected expanded default projects dir, got %s", cfg.ProjectsDir)
+	// Check defaults were applied for other fields
+	if cfg.Claude.Model != "opus" {
+		t.Errorf("expected default model=opus, got %s", cfg.Claude.Model)
 	}
 
-	if cfg.MaxReviewIterations != 5 {
-		t.Errorf("expected default max_review_iterations, got %d", cfg.MaxReviewIterations)
+	if cfg.Claude.MaxTurns != 50 {
+		t.Errorf("expected default max_turns=50, got %d", cfg.Claude.MaxTurns)
+	}
+
+	if cfg.Claude.Verbose != true {
+		t.Errorf("expected verbose=true (default), got %v", cfg.Claude.Verbose)
 	}
 }
 
-func TestLoadFromPath_ValidFile(t *testing.T) {
-	// Create a temp directory and config file.
+func TestLoadFromPath_FullConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 
 	configJSON := `{
-		"database_path": "/custom/path/db.sqlite",
-		"max_review_iterations": 3,
+		"max_iterations": 15,
 		"claude": {
-			"model": "sonnet",
-			"max_turns": 25
+			"model": "claude-sonnet-4-20250514",
+			"max_turns": 100,
+			"verbose": false
 		}
 	}`
 
@@ -99,41 +76,29 @@ func TestLoadFromPath_ValidFile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check that file values were applied.
-	if cfg.DatabasePath != "/custom/path/db.sqlite" {
-		t.Errorf("expected custom database path, got %s", cfg.DatabasePath)
+	if cfg.MaxIterations != 15 {
+		t.Errorf("expected max_iterations=15, got %d", cfg.MaxIterations)
 	}
 
-	if cfg.MaxReviewIterations != 3 {
-		t.Errorf("expected max_review_iterations=3, got %d", cfg.MaxReviewIterations)
+	if cfg.Claude.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("expected model=claude-sonnet-4-20250514, got %s", cfg.Claude.Model)
 	}
 
-	if cfg.Claude.Model != "sonnet" {
-		t.Errorf("expected model=sonnet, got %s", cfg.Claude.Model)
+	if cfg.Claude.MaxTurns != 100 {
+		t.Errorf("expected max_turns=100, got %d", cfg.Claude.MaxTurns)
 	}
 
-	if cfg.Claude.MaxTurns != 25 {
-		t.Errorf("expected max_turns=25, got %d", cfg.Claude.MaxTurns)
-	}
-
-	// Check that defaults were preserved for fields not in file.
-	if cfg.MaxTaskAttempts != 10 {
-		t.Errorf("expected default max_task_attempts=10, got %d", cfg.MaxTaskAttempts)
-	}
-
-	if cfg.Claude.MaxBudgetUSD != 10.0 {
-		t.Errorf("expected default max_budget_usd=10.0, got %f", cfg.Claude.MaxBudgetUSD)
+	if cfg.Claude.Verbose != false {
+		t.Errorf("expected verbose=false, got %v", cfg.Claude.Verbose)
 	}
 }
 
-func TestLoadFromPath_PartialConfig(t *testing.T) {
+func TestLoadFromPath_EmptyConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 
-	// Only set one field.
-	configJSON := `{"max_review_iterations": 7}`
-
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+	// Empty config should use all defaults
+	if err := os.WriteFile(configPath, []byte("{}"), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
 
@@ -142,18 +107,13 @@ func TestLoadFromPath_PartialConfig(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// The set field should be updated.
-	if cfg.MaxReviewIterations != 7 {
-		t.Errorf("expected max_review_iterations=7, got %d", cfg.MaxReviewIterations)
-	}
-
-	// All other fields should be defaults.
-	if cfg.MaxTaskAttempts != 10 {
-		t.Errorf("expected default max_task_attempts, got %d", cfg.MaxTaskAttempts)
+	// All defaults should apply
+	if cfg.MaxIterations != 15 {
+		t.Errorf("expected default max_iterations=15, got %d", cfg.MaxIterations)
 	}
 
 	if cfg.Claude.Model != "opus" {
-		t.Errorf("expected default model, got %s", cfg.Claude.Model)
+		t.Errorf("expected default model=opus, got %s", cfg.Claude.Model)
 	}
 }
 
@@ -161,7 +121,6 @@ func TestLoadFromPath_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 
-	// Write invalid JSON.
 	if err := os.WriteFile(configPath, []byte("not valid json"), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
 	}
@@ -176,12 +135,70 @@ func TestLoadFromPath_InvalidJSON(t *testing.T) {
 	}
 }
 
-func TestLoadFromPath_InvalidValues(t *testing.T) {
+func TestLoadFromPath_PartialClaudeConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 
-	// Invalid: max_review_iterations = 0.
-	configJSON := `{"max_review_iterations": 0}`
+	// Only set model, should use defaults for max_turns and verbose.
+	configJSON := `{
+		"claude": {
+			"model": "sonnet"
+		}
+	}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadFromPath(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Claude.Model != "sonnet" {
+		t.Errorf("expected model=sonnet, got %s", cfg.Claude.Model)
+	}
+
+	// Should use defaults for unset fields.
+	if cfg.Claude.MaxTurns != 50 {
+		t.Errorf("expected default max_turns=50, got %d", cfg.Claude.MaxTurns)
+	}
+
+	if cfg.Claude.Verbose != true {
+		t.Errorf("expected default verbose=true, got %v", cfg.Claude.Verbose)
+	}
+}
+
+func TestLoadFromPath_VerboseExplicitlyFalse(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{
+		"claude": {
+			"verbose": false
+		}
+	}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadFromPath(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Claude.Verbose != false {
+		t.Errorf("expected verbose=false, got %v", cfg.Claude.Verbose)
+	}
+}
+
+func TestLoadFromPath_ZeroMaxIterations(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// Explicitly set to 0 should trigger validation error
+	configJSON := `{"max_iterations": 0}`
 
 	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
@@ -189,31 +206,109 @@ func TestLoadFromPath_InvalidValues(t *testing.T) {
 
 	_, err := LoadFromPath(configPath)
 	if err == nil {
-		t.Fatal("expected validation error")
+		t.Fatal("expected validation error for max_iterations=0")
 	}
 
-	if !strings.Contains(err.Error(), "max_review_iterations must be >= 1") {
+	if !strings.Contains(err.Error(), "max_iterations must be >= 1") {
 		t.Errorf("expected validation error message, got: %v", err)
 	}
 }
 
-func TestValidate_AllValid(t *testing.T) {
-	cfg := DefaultConfig()
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("default config should be valid, got error: %v", err)
+func TestLoadFromPath_NegativeMaxIterations(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{"max_iterations": -5}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	_, err := LoadFromPath(configPath)
+	if err == nil {
+		t.Fatal("expected validation error for negative max_iterations")
+	}
+
+	if !strings.Contains(err.Error(), "max_iterations must be >= 1") {
+		t.Errorf("expected validation error message, got: %v", err)
 	}
 }
 
-func TestValidate_InvalidMaxReviewIterations(t *testing.T) {
+func TestLoadFromPath_ZeroMaxTurns(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	// max_turns=0 should trigger validation error
+	configJSON := `{
+		"claude": {
+			"max_turns": 0
+		}
+	}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	_, err := LoadFromPath(configPath)
+	if err == nil {
+		t.Fatal("expected validation error for max_turns=0")
+	}
+
+	if !strings.Contains(err.Error(), "claude.max_turns must be >= 1") {
+		t.Errorf("expected validation error message, got: %v", err)
+	}
+}
+
+func TestLoadFromPath_NegativeMaxTurns(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.json")
+
+	configJSON := `{
+		"claude": {
+			"max_turns": -1
+		}
+	}`
+
+	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	_, err := LoadFromPath(configPath)
+	if err == nil {
+		t.Fatal("expected validation error for negative max_turns")
+	}
+
+	if !strings.Contains(err.Error(), "claude.max_turns must be >= 1") {
+		t.Errorf("expected validation error message, got: %v", err)
+	}
+}
+
+func TestValidate_Valid(t *testing.T) {
+	cfg := &Config{
+		MaxIterations:   10,
+		MaxTaskAttempts: 5,
+		Claude: ClaudeConfig{
+			Model:    "sonnet",
+			MaxTurns: 50,
+			Verbose:  true,
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected valid config, got error: %v", err)
+	}
+}
+
+func TestValidate_InvalidMaxIterations(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.MaxReviewIterations = 0
+	cfg.MaxIterations = 0
 
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 
-	if !strings.Contains(err.Error(), "max_review_iterations must be >= 1") {
+	if !strings.Contains(err.Error(), "max_iterations must be >= 1") {
 		t.Errorf("expected specific error message, got: %v", err)
 	}
 }
@@ -232,27 +327,13 @@ func TestValidate_InvalidMaxTaskAttempts(t *testing.T) {
 	}
 }
 
-func TestValidate_InvalidClaudeModel(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Claude.Model = ""
-
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error")
-	}
-
-	if !strings.Contains(err.Error(), "claude.model must be non-empty") {
-		t.Errorf("expected specific error message, got: %v", err)
-	}
-}
-
-func TestValidate_InvalidClaudeMaxTurns(t *testing.T) {
+func TestValidate_InvalidMaxTurns(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Claude.MaxTurns = 0
 
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("expected validation error")
+		t.Fatal("expected validation error for zero max_turns")
 	}
 
 	if !strings.Contains(err.Error(), "claude.max_turns must be >= 1") {
@@ -260,249 +341,132 @@ func TestValidate_InvalidClaudeMaxTurns(t *testing.T) {
 	}
 }
 
-func TestValidate_InvalidClaudeMaxBudget(t *testing.T) {
+func TestValidate_EmptyModel(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Claude.MaxBudgetUSD = 0
+	cfg.Claude.Model = ""
 
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("expected validation error")
+		t.Fatal("expected validation error for empty model")
 	}
 
-	if !strings.Contains(err.Error(), "claude.max_budget_usd must be > 0") {
+	if !strings.Contains(err.Error(), "claude.model must be non-empty") {
 		t.Errorf("expected specific error message, got: %v", err)
 	}
 }
 
 func TestValidate_MultipleErrors(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.MaxReviewIterations = 0
-	cfg.MaxTaskAttempts = 0
-	cfg.Claude.Model = ""
+	cfg := &Config{
+		MaxIterations:   0,
+		MaxTaskAttempts: 0,
+		Claude: ClaudeConfig{
+			Model:    "",
+			MaxTurns: 0,
+		},
+	}
 
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 
-	// Should contain all three error messages.
 	errStr := err.Error()
-	if !strings.Contains(errStr, "max_review_iterations") {
-		t.Error("expected max_review_iterations error")
+	if !strings.Contains(errStr, "max_iterations") {
+		t.Error("expected max_iterations error")
 	}
 	if !strings.Contains(errStr, "max_task_attempts") {
 		t.Error("expected max_task_attempts error")
 	}
-	if !strings.Contains(errStr, "claude.model") {
-		t.Error("expected claude.model error")
+	if !strings.Contains(errStr, "max_turns") {
+		t.Error("expected max_turns error")
+	}
+	if !strings.Contains(errStr, "model") {
+		t.Error("expected model error")
 	}
 }
 
-func TestValidate_NonexistentAgentFile(t *testing.T) {
+func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Agents.Developer = "/nonexistent/path/developer.md"
 
-	err := cfg.Validate()
-	if err == nil {
-		t.Fatal("expected validation error for nonexistent agent file")
+	if cfg.MaxIterations != 15 {
+		t.Errorf("expected default max_iterations=15, got %d", cfg.MaxIterations)
 	}
 
-	if !strings.Contains(err.Error(), "agents.developer file does not exist") {
-		t.Errorf("expected specific error message, got: %v", err)
-	}
-}
-
-func TestExpandPaths_TildePath(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "~/.local/share/ralph/test.db",
+	if cfg.MaxReviewIterations != 15 {
+		t.Errorf("expected default max_review_iterations=15, got %d", cfg.MaxReviewIterations)
 	}
 
-	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if cfg.MaxTaskAttempts != 10 {
+		t.Errorf("expected default max_task_attempts=10, got %d", cfg.MaxTaskAttempts)
 	}
 
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, ".local/share/ralph/test.db")
-
-	if cfg.DatabasePath != expected {
-		t.Errorf("expected %s, got %s", expected, cfg.DatabasePath)
-	}
-}
-
-func TestExpandPaths_AbsolutePath(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "/absolute/path/db.sqlite",
+	if cfg.Claude.Model != "opus" {
+		t.Errorf("expected default model=opus, got %s", cfg.Claude.Model)
 	}
 
-	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if cfg.Claude.MaxTurns != 50 {
+		t.Errorf("expected default max_turns=50, got %d", cfg.Claude.MaxTurns)
 	}
 
-	if cfg.DatabasePath != "/absolute/path/db.sqlite" {
-		t.Errorf("expected unchanged path, got %s", cfg.DatabasePath)
-	}
-}
-
-func TestExpandPaths_AgentPaths(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "/db/path",
-		Agents: AgentConfig{
-			Developer: "~/agents/developer.md",
-			Reviewer:  "~/agents/reviewer.md",
-			Planner:   "~/agents/planner.md",
-		},
-	}
-
-	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	home, _ := os.UserHomeDir()
-
-	if cfg.Agents.Developer != filepath.Join(home, "agents/developer.md") {
-		t.Errorf("developer path not expanded correctly: %s", cfg.Agents.Developer)
-	}
-
-	if cfg.Agents.Reviewer != filepath.Join(home, "agents/reviewer.md") {
-		t.Errorf("reviewer path not expanded correctly: %s", cfg.Agents.Reviewer)
-	}
-
-	if cfg.Agents.Planner != filepath.Join(home, "agents/planner.md") {
-		t.Errorf("planner path not expanded correctly: %s", cfg.Agents.Planner)
-	}
-}
-
-func TestExpandPaths_Idempotent(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "~/.local/share/ralph/test.db",
-	}
-
-	// Expand twice.
-	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error on first expand: %v", err)
-	}
-
-	firstPath := cfg.DatabasePath
-
-	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error on second expand: %v", err)
-	}
-
-	if cfg.DatabasePath != firstPath {
-		t.Errorf("expand should be idempotent, got different results")
-	}
-}
-
-func TestGetDatabasePath(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "/custom/path/db.sqlite",
-	}
-
-	if cfg.GetDatabasePath() != "/custom/path/db.sqlite" {
-		t.Errorf("GetDatabasePath returned wrong value: %s", cfg.GetDatabasePath())
+	if cfg.Claude.Verbose != true {
+		t.Errorf("expected default verbose=true, got %v", cfg.Claude.Verbose)
 	}
 }
 
 func TestGetProjectsDir(t *testing.T) {
-	cfg := &Config{
-		ProjectsDir: "/custom/projects",
-	}
-
-	if cfg.GetProjectsDir() != "/custom/projects" {
-		t.Errorf("GetProjectsDir returned wrong value: %s", cfg.GetProjectsDir())
-	}
-}
-
-func TestLoadFromPath_ProjectsDir(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
-
-	configJSON := `{
-		"projects_dir": "~/my-projects"
-	}`
-
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	cfg, err := LoadFromPath(configPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, "my-projects")
-
-	if cfg.ProjectsDir != expected {
-		t.Errorf("expected %s, got %s", expected, cfg.ProjectsDir)
-	}
-}
-
-func TestExpandPaths_ProjectsDir(t *testing.T) {
-	cfg := &Config{
-		DatabasePath: "/db/path",
-		ProjectsDir:  "~/my-projects",
-	}
-
+	cfg := DefaultConfig()
 	if err := cfg.ExpandPaths(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("failed to expand paths: %v", err)
 	}
 
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, "my-projects")
+	projectsDir := cfg.GetProjectsDir()
+	if projectsDir == "" {
+		t.Error("expected non-empty projects dir")
+	}
 
-	if cfg.ProjectsDir != expected {
-		t.Errorf("expected %s, got %s", expected, cfg.ProjectsDir)
+	// Should not contain ~ (should be expanded)
+	if strings.Contains(projectsDir, "~") {
+		t.Errorf("expected ~ to be expanded, got: %s", projectsDir)
+	}
+
+	// Should contain the default path components
+	if !strings.Contains(projectsDir, "ralph") || !strings.Contains(projectsDir, "projects") {
+		t.Errorf("expected projects dir to contain 'ralph/projects', got: %s", projectsDir)
 	}
 }
 
-func TestGetAgentPrompt_DefaultDeveloper(t *testing.T) {
+func TestGetAgentPrompt_NoCustomPath(t *testing.T) {
 	cfg := DefaultConfig()
 
+	// With no custom path set, should return empty string
 	prompt, err := cfg.GetAgentPrompt("developer")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Config returns empty string for defaults - caller handles defaults.
 	if prompt != "" {
-		t.Errorf("expected empty string for default, got %s", prompt)
+		t.Errorf("expected empty prompt for no custom path, got: %s", prompt)
 	}
 }
 
-func TestGetAgentPrompt_DefaultReviewer(t *testing.T) {
+func TestGetAgentPrompt_UnknownType(t *testing.T) {
 	cfg := DefaultConfig()
 
-	prompt, err := cfg.GetAgentPrompt("reviewer")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, err := cfg.GetAgentPrompt("unknown")
+	if err == nil {
+		t.Fatal("expected error for unknown agent type")
 	}
 
-	// Config returns empty string for defaults - caller handles defaults.
-	if prompt != "" {
-		t.Errorf("expected empty string for default, got %s", prompt)
-	}
-}
-
-func TestGetAgentPrompt_DefaultPlanner(t *testing.T) {
-	cfg := DefaultConfig()
-
-	prompt, err := cfg.GetAgentPrompt("planner")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Config returns empty string for defaults - caller handles defaults.
-	if prompt != "" {
-		t.Errorf("expected empty string for default, got %s", prompt)
+	if !strings.Contains(err.Error(), "unknown agent type") {
+		t.Errorf("expected unknown agent type error, got: %v", err)
 	}
 }
 
-func TestGetAgentPrompt_CustomFile(t *testing.T) {
+func TestGetAgentPrompt_CustomPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	promptPath := filepath.Join(tmpDir, "custom_developer.md")
 
-	customPrompt := "This is a custom developer prompt."
+	customPrompt := "Custom developer prompt content"
 	if err := os.WriteFile(promptPath, []byte(customPrompt), 0644); err != nil {
 		t.Fatalf("failed to write custom prompt: %v", err)
 	}
@@ -516,38 +480,61 @@ func TestGetAgentPrompt_CustomFile(t *testing.T) {
 	}
 
 	if prompt != customPrompt {
-		t.Errorf("expected custom prompt, got: %s", prompt)
+		t.Errorf("expected '%s', got '%s'", customPrompt, prompt)
 	}
 }
 
-func TestGetAgentPrompt_CustomFileNotFound(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Agents.Developer = "/nonexistent/path/developer.md"
-
-	_, err := cfg.GetAgentPrompt("developer")
-	if err == nil {
-		t.Fatal("expected error for nonexistent custom file")
+func TestEnsureConfigDir(t *testing.T) {
+	// This test verifies EnsureConfigDir creates the directory.
+	// We can't easily test the actual ~/.config/ralph without side effects,
+	// so we just verify it returns a valid path.
+	dir, err := EnsureConfigDir()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "failed to read custom prompt file") {
-		t.Errorf("expected specific error message, got: %v", err)
-	}
-}
-
-func TestGetAgentPrompt_UnknownType(t *testing.T) {
-	cfg := DefaultConfig()
-
-	_, err := cfg.GetAgentPrompt("unknown")
-	if err == nil {
-		t.Fatal("expected error for unknown agent type")
+	if dir == "" {
+		t.Error("expected non-empty directory path")
 	}
 
-	if !strings.Contains(err.Error(), "unknown agent type") {
-		t.Errorf("expected specific error message, got: %v", err)
+	// Verify the directory exists.
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("config directory should exist: %v", err)
+	}
+
+	if !info.IsDir() {
+		t.Error("expected directory, not file")
 	}
 }
 
-func TestExpandPath_EmptyString(t *testing.T) {
+func TestGetConfigPath(t *testing.T) {
+	path, err := GetConfigPath()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if path == "" {
+		t.Error("expected non-empty path")
+	}
+
+	// Should end with config.json.
+	if !strings.HasSuffix(path, "config.json") {
+		t.Errorf("expected path to end with config.json, got: %s", path)
+	}
+
+	// Should contain ralph.
+	if !strings.Contains(path, "ralph") {
+		t.Errorf("expected path to contain 'ralph', got: %s", path)
+	}
+
+	// Should not contain ~.
+	if strings.Contains(path, "~") {
+		t.Errorf("expected ~ to be expanded, got: %s", path)
+	}
+}
+
+func TestExpandPath_Empty(t *testing.T) {
 	path, err := expandPath("")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -602,19 +589,28 @@ func TestExpandPath_RelativePath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should be cleaned but stay relative.
 	if path != "relative/path" {
 		t.Errorf("expected relative/path, got %s", path)
 	}
 }
 
-func TestLoadFromPath_TildeExpansion(t *testing.T) {
+func TestExpandPath_CleansDotDot(t *testing.T) {
+	path, err := expandPath("/foo/bar/../baz")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if path != "/foo/baz" {
+		t.Errorf("expected /foo/baz, got %s", path)
+	}
+}
+
+func TestMaxIterationsAndMaxReviewIterationsSync(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 
-	configJSON := `{
-		"database_path": "~/.ralph/custom.db"
-	}`
+	// Test max_iterations sets max_review_iterations
+	configJSON := `{"max_iterations": 8}`
 
 	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
@@ -625,29 +621,21 @@ func TestLoadFromPath_TildeExpansion(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	home, _ := os.UserHomeDir()
-	expected := filepath.Join(home, ".ralph/custom.db")
+	if cfg.MaxIterations != 8 {
+		t.Errorf("expected max_iterations=8, got %d", cfg.MaxIterations)
+	}
 
-	if cfg.DatabasePath != expected {
-		t.Errorf("expected %s, got %s", expected, cfg.DatabasePath)
+	if cfg.MaxReviewIterations != 8 {
+		t.Errorf("expected max_review_iterations=8 (synced from max_iterations), got %d", cfg.MaxReviewIterations)
 	}
 }
 
-func TestLoadFromPath_AgentWithExistingFile(t *testing.T) {
+func TestMaxReviewIterationsSetsMaxIterations(t *testing.T) {
 	tmpDir := t.TempDir()
-
-	// Create a custom agent file.
-	agentPath := filepath.Join(tmpDir, "developer.md")
-	if err := os.WriteFile(agentPath, []byte("custom prompt"), 0644); err != nil {
-		t.Fatalf("failed to write agent file: %v", err)
-	}
-
 	configPath := filepath.Join(tmpDir, "config.json")
-	configJSON := `{
-		"agents": {
-			"developer": "` + agentPath + `"
-		}
-	}`
+
+	// Test max_review_iterations sets max_iterations (backward compat)
+	configJSON := `{"max_review_iterations": 12}`
 
 	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
 		t.Fatalf("failed to write config file: %v", err)
@@ -658,86 +646,38 @@ func TestLoadFromPath_AgentWithExistingFile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.Agents.Developer != agentPath {
-		t.Errorf("expected %s, got %s", agentPath, cfg.Agents.Developer)
+	if cfg.MaxReviewIterations != 12 {
+		t.Errorf("expected max_review_iterations=12, got %d", cfg.MaxReviewIterations)
+	}
+
+	if cfg.MaxIterations != 12 {
+		t.Errorf("expected max_iterations=12 (synced from max_review_iterations), got %d", cfg.MaxIterations)
 	}
 }
 
-func TestLoadFromPath_AgentWithNonexistentFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
+func TestExpandPaths_OnlyOnce(t *testing.T) {
+	cfg := DefaultConfig()
 
-	configJSON := `{
-		"agents": {
-			"developer": "/nonexistent/developer.md"
-		}
-	}`
-
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
+	// First call
+	if err := cfg.ExpandPaths(); err != nil {
+		t.Fatalf("unexpected error on first expand: %v", err)
 	}
 
-	_, err := LoadFromPath(configPath)
-	if err == nil {
-		t.Fatal("expected validation error for nonexistent agent file")
+	// Verify first expansion worked
+	if strings.Contains(cfg.ProjectsDir, "~") {
+		t.Errorf("expected ~ to be expanded on first call, got %s", cfg.ProjectsDir)
 	}
 
-	if !strings.Contains(err.Error(), "agents.developer file does not exist") {
-		t.Errorf("expected specific error message, got: %v", err)
-	}
-}
+	// Change the unexpanded value and call again
+	cfg.ProjectsDir = "~/different/path"
 
-func TestLoadFromPath_DefaultPauseMode(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
-
-	// Test with pause mode enabled
-	configJSON := `{"default_pause_mode": true}`
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
+	// Second call should be a no-op (expandedPaths flag prevents re-expansion)
+	if err := cfg.ExpandPaths(); err != nil {
+		t.Fatalf("unexpected error on second expand: %v", err)
 	}
 
-	cfg, err := LoadFromPath(configPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if !cfg.DefaultPauseMode {
-		t.Error("expected default_pause_mode to be true")
-	}
-
-	// Test with pause mode disabled (explicit)
-	configJSON = `{"default_pause_mode": false}`
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	cfg, err = LoadFromPath(configPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cfg.DefaultPauseMode {
-		t.Error("expected default_pause_mode to be false")
-	}
-}
-
-func TestLoadFromPath_DefaultPauseModeNotSet(t *testing.T) {
-	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
-
-	// Config without pause mode setting should use default (false)
-	configJSON := `{"max_review_iterations": 7}`
-	if err := os.WriteFile(configPath, []byte(configJSON), 0644); err != nil {
-		t.Fatalf("failed to write config file: %v", err)
-	}
-
-	cfg, err := LoadFromPath(configPath)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if cfg.DefaultPauseMode {
-		t.Error("expected default_pause_mode to be false when not set")
+	// The ~ should NOT be expanded since ExpandPaths is a no-op after first call
+	if cfg.ProjectsDir != "~/different/path" {
+		t.Errorf("expected ProjectsDir to remain ~/different/path (unexpanded), got %s", cfg.ProjectsDir)
 	}
 }

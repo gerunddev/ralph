@@ -126,3 +126,76 @@ type Feedback struct {
 	Content      *string // nullable
 	CreatedAt    time.Time
 }
+
+// =============================================================================
+// V2 Models
+// =============================================================================
+
+// PlanStatus represents the status of a plan (V2).
+type PlanStatus string
+
+const (
+	PlanStatusPending   PlanStatus = "pending"
+	PlanStatusRunning   PlanStatus = "running"
+	PlanStatusCompleted PlanStatus = "completed"
+	PlanStatusFailed    PlanStatus = "failed"
+)
+
+// PlanSessionStatus represents the status of a plan session (V2).
+type PlanSessionStatus string
+
+const (
+	PlanSessionRunning   PlanSessionStatus = "running"
+	PlanSessionCompleted PlanSessionStatus = "completed"
+	PlanSessionFailed    PlanSessionStatus = "failed"
+)
+
+// Plan represents a V2 plan (simplified from V1 project).
+type Plan struct {
+	ID         string
+	OriginPath string
+	Content    string
+	Status     PlanStatus
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// PlanSession represents a Claude session linked to a plan (V2).
+type PlanSession struct {
+	ID          string
+	PlanID      string
+	Iteration   int
+	InputPrompt string
+	FinalOutput string
+	Status      PlanSessionStatus
+	CreatedAt   time.Time
+	CompletedAt *time.Time
+}
+
+// Event represents a stream event from Claude (V2).
+type Event struct {
+	ID        int64
+	SessionID string
+	Sequence  int
+	EventType string
+	RawJSON   string
+	CreatedAt time.Time
+}
+
+// Progress represents a progress snapshot (V2).
+type Progress struct {
+	ID        int64
+	PlanID    string
+	SessionID string
+	Content   string
+	CreatedAt time.Time
+}
+
+// Learnings represents a learnings snapshot (V2).
+type Learnings struct {
+	ID        int64
+	PlanID    string
+	SessionID string
+	Content   string
+	CreatedAt time.Time
+}

@@ -14,7 +14,9 @@ func newTestDB(t *testing.T) *DB {
 		t.Fatalf("failed to create test database: %v", err)
 	}
 	t.Cleanup(func() {
-		db.Close()
+		if err := db.Close(); err != nil {
+			t.Errorf("failed to close test database: %v", err)
+		}
 	})
 	return db
 }
@@ -28,7 +30,11 @@ func TestNew(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() returned error: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	}()
 
 	if db.conn == nil {
 		t.Error("New() returned DB with nil connection")
@@ -201,7 +207,10 @@ func TestUpdateProjectStatus(t *testing.T) {
 		t.Fatalf("UpdateProjectStatus() returned error: %v", err)
 	}
 
-	got, _ := db.GetProject("proj-1")
+	got, err := db.GetProject("proj-1")
+	if err != nil {
+		t.Fatalf("GetProject() returned error: %v", err)
+	}
 	if got.Status != ProjectCompleted {
 		t.Errorf("UpdateProjectStatus() status = %v, want %v", got.Status, ProjectCompleted)
 	}
@@ -285,7 +294,10 @@ func TestCreateTasks_Bulk(t *testing.T) {
 		t.Fatalf("CreateTasks() returned error: %v", err)
 	}
 
-	got, _ := db.GetTasksByProject("proj-1")
+	got, err := db.GetTasksByProject("proj-1")
+	if err != nil {
+		t.Fatalf("GetTasksByProject() returned error: %v", err)
+	}
 	if len(got) != 3 {
 		t.Errorf("CreateTasks() created %d tasks, want 3", len(got))
 	}
@@ -295,7 +307,9 @@ func TestGetTask(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
 	changeID := "abc123"
 	task := &Task{
@@ -306,7 +320,9 @@ func TestGetTask(t *testing.T) {
 		Description: "Desc",
 		JJChangeID:  &changeID,
 	}
-	db.CreateTask(task)
+	if err := db.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	got, err := db.GetTask("task-1")
 	if err != nil {
@@ -334,12 +350,20 @@ func TestGetTasksByProject(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
 	// Create tasks out of order
-	db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "T3", Description: "D3"})
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1"})
-	db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "T2", Description: "D2"})
+	if err := db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "T3", Description: "D3"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "T2", Description: "D2"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	tasks, err := db.GetTasksByProject("proj-1")
 	if err != nil {
@@ -360,11 +384,19 @@ func TestGetNextPendingTask(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1", Status: TaskCompleted})
-	db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "T2", Description: "D2", Status: TaskPending})
-	db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "T3", Description: "D3", Status: TaskPending})
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1", Status: TaskCompleted}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "T2", Description: "D2", Status: TaskPending}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "T3", Description: "D3", Status: TaskPending}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	task, err := db.GetNextPendingTask("proj-1")
 	if err != nil {
@@ -380,9 +412,13 @@ func TestGetNextPendingTask_NoneRemaining(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1", Status: TaskCompleted})
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T1", Description: "D1", Status: TaskCompleted}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	_, err := db.GetNextPendingTask("proj-1")
 	if !errors.Is(err, ErrNotFound) {
@@ -394,14 +430,21 @@ func TestUpdateTaskStatus(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	if err := db.UpdateTaskStatus("task-1", TaskInProgress); err != nil {
 		t.Fatalf("UpdateTaskStatus() returned error: %v", err)
 	}
 
-	got, _ := db.GetTask("task-1")
+	got, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	if got.Status != TaskInProgress {
 		t.Errorf("UpdateTaskStatus() status = %v, want %v", got.Status, TaskInProgress)
 	}
@@ -411,14 +454,21 @@ func TestUpdateTaskJJChangeID(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	if err := db.UpdateTaskJJChangeID("task-1", "xyz789"); err != nil {
 		t.Fatalf("UpdateTaskJJChangeID() returned error: %v", err)
 	}
 
-	got, _ := db.GetTask("task-1")
+	got, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	if got.JJChangeID == nil || *got.JJChangeID != "xyz789" {
 		t.Errorf("UpdateTaskJJChangeID() jj_change_id = %v, want xyz789", got.JJChangeID)
 	}
@@ -428,14 +478,25 @@ func TestIncrementTaskIteration(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	// Increment twice
-	db.IncrementTaskIteration("task-1")
-	db.IncrementTaskIteration("task-1")
+	if err := db.IncrementTaskIteration("task-1"); err != nil {
+		t.Fatalf("IncrementTaskIteration() returned error: %v", err)
+	}
+	if err := db.IncrementTaskIteration("task-1"); err != nil {
+		t.Fatalf("IncrementTaskIteration() returned error: %v", err)
+	}
 
-	got, _ := db.GetTask("task-1")
+	got, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	if got.IterationCount != 2 {
 		t.Errorf("IncrementTaskIteration() count = %d, want 2", got.IterationCount)
 	}
@@ -449,8 +510,12 @@ func TestCreateSession(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	session := &Session{
 		ID:          "sess-1",
@@ -493,9 +558,15 @@ func TestGetSession(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "Review"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "Review"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	got, err := db.GetSession("sess-1")
 	if err != nil {
@@ -511,13 +582,23 @@ func TestGetSessionsByTask(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	// Create sessions in reverse order
-	db.CreateSession(&Session{ID: "sess-3", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 3, InputPrompt: "P3"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P1"})
-	db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"})
+	if err := db.CreateSession(&Session{ID: "sess-3", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 3, InputPrompt: "P3"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P1"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	sessions, err := db.GetSessionsByTask("task-1")
 	if err != nil {
@@ -538,15 +619,24 @@ func TestCompleteSession(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	if err := db.CompleteSession("sess-1", SessionCompleted); err != nil {
 		t.Fatalf("CompleteSession() returned error: %v", err)
 	}
 
-	got, _ := db.GetSession("sess-1")
+	got, err := db.GetSession("sess-1")
+	if err != nil {
+		t.Fatalf("GetSession() returned error: %v", err)
+	}
 	if got.Status != SessionCompleted {
 		t.Errorf("CompleteSession() status = %v, want %v", got.Status, SessionCompleted)
 	}
@@ -559,12 +649,20 @@ func TestGetLatestSessionForTask(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P1"})
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P1"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 	time.Sleep(10 * time.Millisecond)
-	db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"})
+	if err := db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	got, err := db.GetLatestSessionForTask("task-1")
 	if err != nil {
@@ -584,9 +682,15 @@ func TestCreateMessage(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	msg := &Message{
 		SessionID:   "sess-1",
@@ -611,14 +715,26 @@ func TestGetMessagesBySession(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentDeveloper, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	// Create messages out of order
-	db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 3, MessageType: "text", Content: "C3"})
-	db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 1, MessageType: "text", Content: "C1"})
-	db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 2, MessageType: "text", Content: "C2"})
+	if err := db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 3, MessageType: "text", Content: "C3"}); err != nil {
+		t.Fatalf("CreateMessage() returned error: %v", err)
+	}
+	if err := db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 1, MessageType: "text", Content: "C1"}); err != nil {
+		t.Fatalf("CreateMessage() returned error: %v", err)
+	}
+	if err := db.CreateMessage(&Message{SessionID: "sess-1", Sequence: 2, MessageType: "text", Content: "C2"}); err != nil {
+		t.Fatalf("CreateMessage() returned error: %v", err)
+	}
 
 	messages, err := db.GetMessagesBySession("sess-1")
 	if err != nil {
@@ -643,9 +759,15 @@ func TestCreateFeedback(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	content := "Please fix the error handling"
 	feedback := &Feedback{
@@ -667,9 +789,15 @@ func TestCreateFeedback_NilContent(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	feedback := &Feedback{
 		SessionID:    "sess-1",
@@ -686,15 +814,25 @@ func TestGetFeedbackBySession(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	content1 := "Issue 1"
 	content2 := "Issue 2"
-	db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMinor, Content: &content1})
+	if err := db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMinor, Content: &content1}); err != nil {
+		t.Fatalf("CreateFeedback() returned error: %v", err)
+	}
 	time.Sleep(10 * time.Millisecond)
-	db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMajor, Content: &content2})
+	if err := db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMajor, Content: &content2}); err != nil {
+		t.Fatalf("CreateFeedback() returned error: %v", err)
+	}
 
 	feedbacks, err := db.GetFeedbackBySession("sess-1")
 	if err != nil {
@@ -710,17 +848,29 @@ func TestGetLatestFeedbackForTask(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
-	db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P1"})
-	db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"})
+	if err := db.CreateSession(&Session{ID: "sess-1", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 1, InputPrompt: "P1"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
+	if err := db.CreateSession(&Session{ID: "sess-2", TaskID: "task-1", AgentType: AgentReviewer, Iteration: 2, InputPrompt: "P2"}); err != nil {
+		t.Fatalf("CreateSession() returned error: %v", err)
+	}
 
 	content1 := "Old feedback"
 	content2 := "New feedback"
-	db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMinor, Content: &content1})
+	if err := db.CreateFeedback(&Feedback{SessionID: "sess-1", FeedbackType: FeedbackMinor, Content: &content1}); err != nil {
+		t.Fatalf("CreateFeedback() returned error: %v", err)
+	}
 	time.Sleep(10 * time.Millisecond)
-	db.CreateFeedback(&Feedback{SessionID: "sess-2", FeedbackType: FeedbackApproved, Content: &content2})
+	if err := db.CreateFeedback(&Feedback{SessionID: "sess-2", FeedbackType: FeedbackApproved, Content: &content2}); err != nil {
+		t.Fatalf("CreateFeedback() returned error: %v", err)
+	}
 
 	feedback, err := db.GetLatestFeedbackForTask("task-1")
 	if err != nil {
@@ -736,8 +886,12 @@ func TestGetLatestFeedbackForTask_NotFound(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "T", Description: "D"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	_, err := db.GetLatestFeedbackForTask("task-1")
 	if !errors.Is(err, ErrNotFound) {
@@ -867,7 +1021,10 @@ func TestUpdateProjectLearningsState(t *testing.T) {
 	}
 
 	// Verify initial state is empty
-	got, _ := db.GetProject("proj-1")
+	got, err := db.GetProject("proj-1")
+	if err != nil {
+		t.Fatalf("GetProject() returned error: %v", err)
+	}
 	if got.LearningsState != LearningsStateNone {
 		t.Errorf("Initial LearningsState = %v, want %v", got.LearningsState, LearningsStateNone)
 	}
@@ -877,7 +1034,10 @@ func TestUpdateProjectLearningsState(t *testing.T) {
 		t.Fatalf("UpdateProjectLearningsState() returned error: %v", err)
 	}
 
-	got, _ = db.GetProject("proj-1")
+	got, err = db.GetProject("proj-1")
+	if err != nil {
+		t.Fatalf("GetProject() returned error: %v", err)
+	}
 	if got.LearningsState != LearningsStateComplete {
 		t.Errorf("UpdateProjectLearningsState() state = %v, want %v", got.LearningsState, LearningsStateComplete)
 	}
@@ -927,11 +1087,19 @@ func TestGetTaskBySequence(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "First", Description: "Desc 1"})
-	db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "Second", Description: "Desc 2"})
-	db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "Third", Description: "Desc 3"})
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "First", Description: "Desc 1"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-2", ProjectID: "proj-1", Sequence: 2, Title: "Second", Description: "Desc 2"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-3", ProjectID: "proj-1", Sequence: 3, Title: "Third", Description: "Desc 3"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	got, err := db.GetTaskBySequence("proj-1", 2)
 	if err != nil {
@@ -953,9 +1121,13 @@ func TestGetTaskBySequence_NotFound(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "First", Description: "Desc"})
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "First", Description: "Desc"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	_, err := db.GetTaskBySequence("proj-1", 99)
 	if !errors.Is(err, ErrNotFound) {
@@ -968,10 +1140,16 @@ func TestGetTaskBySequence_WrongProject(t *testing.T) {
 
 	project1 := &Project{ID: "proj-1", Name: "Project 1", PlanText: "Plan"}
 	project2 := &Project{ID: "proj-2", Name: "Project 2", PlanText: "Plan"}
-	db.CreateProject(project1)
-	db.CreateProject(project2)
+	if err := db.CreateProject(project1); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateProject(project2); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
 
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Desc"})
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Desc"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	// Task exists in proj-1 but not proj-2
 	_, err := db.GetTaskBySequence("proj-2", 1)
@@ -984,15 +1162,22 @@ func TestUpdateTaskDescription(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Original description"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Original description"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
 	newDesc := "Updated description with more details"
 	if err := db.UpdateTaskDescription("task-1", newDesc); err != nil {
 		t.Fatalf("UpdateTaskDescription() returned error: %v", err)
 	}
 
-	got, _ := db.GetTask("task-1")
+	got, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	if got.Description != newDesc {
 		t.Errorf("UpdateTaskDescription() description = %v, want %v", got.Description, newDesc)
 	}
@@ -1011,17 +1196,29 @@ func TestUpdateTaskDescription_UpdatesTimestamp(t *testing.T) {
 	db := newTestDB(t)
 
 	project := &Project{ID: "proj-1", Name: "Project", PlanText: "Plan"}
-	db.CreateProject(project)
-	db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Original"})
+	if err := db.CreateProject(project); err != nil {
+		t.Fatalf("CreateProject() returned error: %v", err)
+	}
+	if err := db.CreateTask(&Task{ID: "task-1", ProjectID: "proj-1", Sequence: 1, Title: "Task", Description: "Original"}); err != nil {
+		t.Fatalf("CreateTask() returned error: %v", err)
+	}
 
-	original, _ := db.GetTask("task-1")
+	original, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	originalUpdatedAt := original.UpdatedAt
 
 	time.Sleep(10 * time.Millisecond)
 
-	db.UpdateTaskDescription("task-1", "New description")
+	if err := db.UpdateTaskDescription("task-1", "New description"); err != nil {
+		t.Fatalf("UpdateTaskDescription() returned error: %v", err)
+	}
 
-	updated, _ := db.GetTask("task-1")
+	updated, err := db.GetTask("task-1")
+	if err != nil {
+		t.Fatalf("GetTask() returned error: %v", err)
+	}
 	if !updated.UpdatedAt.After(originalUpdatedAt) {
 		t.Error("UpdateTaskDescription() did not update UpdatedAt timestamp")
 	}

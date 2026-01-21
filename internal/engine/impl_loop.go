@@ -86,7 +86,7 @@ func NewImplLoop(deps ImplLoopDeps, task *db.Task, plan string) *ImplLoop {
 		task:   task,
 		plan:   plan,
 		status: ImplLoopStatusPending,
-		events: make(chan ImplLoopEvent, 100),
+		events: make(chan ImplLoopEvent, 1000),
 	}
 }
 
@@ -222,7 +222,7 @@ func (il *ImplLoop) runDeveloper(ctx context.Context, feedback string) error {
 	}
 
 	// Run Claude
-	claudeSession, err := il.deps.Claude.Run(ctx, agent.Prompt, "")
+	claudeSession, err := il.deps.Claude.Run(ctx, agent.Prompt)
 	if err != nil {
 		// Best-effort status update on failure path.
 		_ = il.deps.DB.CompleteSession(session.ID, db.SessionFailed)
@@ -276,7 +276,7 @@ func (il *ImplLoop) runReviewer(ctx context.Context, diff string) (*ReviewResult
 	}
 
 	// Run Claude
-	claudeSession, err := il.deps.Claude.Run(ctx, agent.Prompt, "")
+	claudeSession, err := il.deps.Claude.Run(ctx, agent.Prompt)
 	if err != nil {
 		// Best-effort status update on failure path.
 		_ = il.deps.DB.CompleteSession(session.ID, db.SessionFailed)

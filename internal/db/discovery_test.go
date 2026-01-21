@@ -26,7 +26,7 @@ func TestDiscoverProjects_NonexistentDir(t *testing.T) {
 		t.Fatalf("DiscoverProjects() returned error: %v", err)
 	}
 
-	if projects != nil && len(projects) != 0 {
+	if len(projects) != 0 {
 		t.Errorf("DiscoverProjects() returned non-empty result for nonexistent dir")
 	}
 }
@@ -50,7 +50,9 @@ func TestDiscoverProjects_SingleProject(t *testing.T) {
 	if err := database.CreateProject(project); err != nil {
 		t.Fatalf("Failed to create project: %v", err)
 	}
-	database.Close()
+	if err := database.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
 
 	// Discover projects
 	projects, err := DiscoverProjects(tmpDir)
@@ -96,7 +98,9 @@ func TestDiscoverProjects_MultipleProjects(t *testing.T) {
 		if err := database.CreateProject(project); err != nil {
 			t.Fatalf("Failed to create project: %v", err)
 		}
-		database.Close()
+		if err := database.Close(); err != nil {
+			t.Fatalf("Failed to close database: %v", err)
+		}
 
 		// Small delay to ensure different timestamps
 		if i < len(projectIDs)-1 {
@@ -135,8 +139,12 @@ func TestDiscoverProjects_SkipsNonProjectDirs(t *testing.T) {
 		Name:     "Valid Project",
 		PlanText: "Plan",
 	}
-	database.CreateProject(project)
-	database.Close()
+	if err := database.CreateProject(project); err != nil {
+		t.Fatalf("Failed to create project: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
 
 	// Create a directory without a database
 	emptyDir := filepath.Join(tmpDir, "empty-dir")
@@ -180,8 +188,12 @@ func TestDiscoverProjects_SkipsCorruptDB(t *testing.T) {
 		Name:     "Valid Project",
 		PlanText: "Plan",
 	}
-	database.CreateProject(project)
-	database.Close()
+	if err := database.CreateProject(project); err != nil {
+		t.Fatalf("Failed to create project: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
 
 	// Create a corrupt database
 	corruptDir := filepath.Join(tmpDir, "corrupt-proj")
@@ -223,8 +235,12 @@ func TestProjectInfo_DBPath(t *testing.T) {
 		Name:     "Test Project",
 		PlanText: "Plan",
 	}
-	database.CreateProject(project)
-	database.Close()
+	if err := database.CreateProject(project); err != nil {
+		t.Fatalf("Failed to create project: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("Failed to close database: %v", err)
+	}
 
 	// Discover and check DBPath is set
 	projects, err := DiscoverProjects(tmpDir)

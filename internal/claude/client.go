@@ -22,16 +22,16 @@ var (
 
 // ClientConfig holds configuration for the Claude client.
 type ClientConfig struct {
-	Model        string
-	MaxTurns     int
-	MaxBudgetUSD float64
+	Model    string
+	MaxTurns int
+	Verbose  bool // Enable verbose output from Claude CLI
 }
 
 // Client wraps the Claude CLI for executing agent sessions.
 type Client struct {
-	model        string
-	maxTurns     int
-	maxBudgetUSD float64
+	model    string
+	maxTurns int
+	verbose  bool
 
 	// CommandRunner allows overriding command creation for testing.
 	// When set, it's called to create the exec.Cmd instead of the default.
@@ -52,7 +52,7 @@ func NewClient(cfg ClientConfig) *Client {
 	return &Client{
 		model:          cfg.Model,
 		maxTurns:       cfg.MaxTurns,
-		maxBudgetUSD:   cfg.MaxBudgetUSD,
+		verbose:        cfg.Verbose,
 		commandCreator: defaultCommandCreator,
 	}
 }
@@ -78,16 +78,19 @@ type Session struct {
 	cancel context.CancelFunc
 }
 
-// Run executes a Claude session with the given prompt and system prompt.
+// Run executes a Claude session with the given prompt.
 // It returns a Session handle for streaming events.
-func (c *Client) Run(ctx context.Context, prompt string, systemPrompt string) (*Session, error) {
+func (c *Client) Run(ctx context.Context, prompt string) (*Session, error) {
 	// Create a cancelable context
 	ctx, cancel := context.WithCancel(ctx)
 
 	// Build the command arguments
+	// Note: --verbose is required when using --output-format stream-json with -p (print mode)
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
+		"--verbose",
+		"--include-partial-messages", // Stream assistant text as it arrives
 	}
 
 	if c.model != "" {
@@ -96,14 +99,6 @@ func (c *Client) Run(ctx context.Context, prompt string, systemPrompt string) (*
 
 	if c.maxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(c.maxTurns))
-	}
-
-	if c.maxBudgetUSD > 0 {
-		args = append(args, "--max-budget-usd", strconv.FormatFloat(c.maxBudgetUSD, 'f', -1, 64))
-	}
-
-	if systemPrompt != "" {
-		args = append(args, "--system-prompt", systemPrompt)
 	}
 
 	// Add the prompt as the final argument
@@ -140,7 +135,7 @@ func (c *Client) Run(ctx context.Context, prompt string, systemPrompt string) (*
 		stderr: stderr,
 		parser: NewParser(stdout),
 		ctx:    ctx,
-		events: make(chan StreamEvent, 100),
+		events: make(chan StreamEvent, 1000),
 		done:   make(chan struct{}),
 		cancel: cancel,
 	}

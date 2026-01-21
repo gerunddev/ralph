@@ -9,22 +9,22 @@ import (
 
 func TestProjectDBPath(t *testing.T) {
 	tests := []struct {
-		name       string
+		name        string
 		projectsDir string
-		projectID  string
-		want       string
+		projectID   string
+		want        string
 	}{
 		{
-			name:       "basic path",
+			name:        "basic path",
 			projectsDir: "/home/user/.local/share/ralph/projects",
-			projectID:  "abc123",
-			want:       "/home/user/.local/share/ralph/projects/abc123/ralph.db",
+			projectID:   "abc123",
+			want:        "/home/user/.local/share/ralph/projects/abc123/ralph.db",
 		},
 		{
-			name:       "short id",
+			name:        "short id",
 			projectsDir: "/data/projects",
-			projectID:  "a1b2c3d4",
-			want:       "/data/projects/a1b2c3d4/ralph.db",
+			projectID:   "a1b2c3d4",
+			want:        "/data/projects/a1b2c3d4/ralph.db",
 		},
 	}
 
@@ -46,7 +46,11 @@ func TestOpenProjectDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenProjectDB() returned error: %v", err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	}()
 
 	// Verify database file was created
 	expectedPath := filepath.Join(tmpDir, projectID, "ralph.db")
@@ -83,14 +87,20 @@ func TestOpenProjectDB_MultipleTimes(t *testing.T) {
 	if err := db1.CreateProject(project); err != nil {
 		t.Fatalf("Failed to create project: %v", err)
 	}
-	db1.Close()
+	if err := db1.Close(); err != nil {
+		t.Fatalf("Failed to close db1: %v", err)
+	}
 
 	// Open again and verify project exists
 	db2, err := OpenProjectDB(tmpDir, projectID)
 	if err != nil {
 		t.Fatalf("Second OpenProjectDB() returned error: %v", err)
 	}
-	defer db2.Close()
+	defer func() {
+		if err := db2.Close(); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	}()
 
 	got, err := db2.GetProject("proj-1")
 	if err != nil {
@@ -118,7 +128,10 @@ func TestGenerateProjectID(t *testing.T) {
 
 	// IDs should be filesystem-safe (alphanumeric and hyphens)
 	for _, c := range id1 {
-		if !((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+		isLower := c >= 'a' && c <= 'z'
+		isDigit := c >= '0' && c <= '9'
+		isHyphen := c == '-'
+		if !isLower && !isDigit && !isHyphen {
 			t.Errorf("GenerateProjectID() contains unsafe character: %c", c)
 		}
 	}
@@ -149,7 +162,11 @@ func TestOpenProjectDB_CreatesDirIfMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenProjectDB() returned error: %v", err)
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("Close() returned error: %v", err)
+		}
+	}()
 
 	// Project directory should now exist
 	if _, err := os.Stat(projectDir); os.IsNotExist(err) {

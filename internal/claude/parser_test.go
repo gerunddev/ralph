@@ -49,6 +49,33 @@ func TestParser_InitEvent(t *testing.T) {
 	}
 }
 
+func TestParser_InitEvent_ToolsAsArray(t *testing.T) {
+	// Test when tools and mcp_servers are arrays instead of integers
+	input := `{"type":"init","session_id":"abc123","model":"claude-sonnet-4-20250514","cwd":"/home/user","tools":["Read","Write","Bash","Grep","Glob"],"mcp_servers":["server1","server2"]}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventInit {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventInit)
+	}
+
+	if event.Init == nil {
+		t.Fatal("event.Init is nil")
+	}
+
+	// Should count array elements
+	if event.Init.Tools != 5 {
+		t.Errorf("Init.Tools = %d, want %d (count of array elements)", event.Init.Tools, 5)
+	}
+	if event.Init.MCPServers != 2 {
+		t.Errorf("Init.MCPServers = %d, want %d (count of array elements)", event.Init.MCPServers, 2)
+	}
+}
+
 // =============================================================================
 // Parser Tests - Message Event
 // =============================================================================
@@ -381,6 +408,144 @@ func TestParser_MissingType(t *testing.T) {
 	// Should get "unknown" type
 	if event.Type != "unknown" {
 		t.Errorf("event.Type = %v, want %v", event.Type, "unknown")
+	}
+}
+
+// =============================================================================
+// Parser Tests - Streaming Text (content_block_delta)
+// =============================================================================
+
+func TestParser_ContentBlockDelta_NestedFormat(t *testing.T) {
+	// Format where content_block_delta is a nested object with delta.text
+	input := `{"content_block_delta":{"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello, "}}}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventAssistantText {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventAssistantText)
+	}
+
+	if event.AssistantText == nil {
+		t.Fatal("event.AssistantText is nil")
+	}
+
+	if event.AssistantText.Text != "Hello, " {
+		t.Errorf("AssistantText.Text = %q, want %q", event.AssistantText.Text, "Hello, ")
+	}
+}
+
+func TestParser_ContentBlockDelta_TopLevelType(t *testing.T) {
+	// Format where type is at top level and text is in nested content_block_delta
+	input := `{"type":"content_block_delta","content_block_delta":{"delta":{"type":"text_delta","text":"world!"}}}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventAssistantText {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventAssistantText)
+	}
+
+	if event.AssistantText == nil {
+		t.Fatal("event.AssistantText is nil")
+	}
+
+	if event.AssistantText.Text != "world!" {
+		t.Errorf("AssistantText.Text = %q, want %q", event.AssistantText.Text, "world!")
+	}
+}
+
+func TestParser_ContentBlockDelta_DirectText(t *testing.T) {
+	// Alternative format where text is directly in content_block_delta
+	input := `{"content_block_delta":{"type":"content_block_delta","text":"streaming chunk"}}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventAssistantText {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventAssistantText)
+	}
+
+	if event.AssistantText == nil {
+		t.Fatal("event.AssistantText is nil")
+	}
+
+	if event.AssistantText.Text != "streaming chunk" {
+		t.Errorf("AssistantText.Text = %q, want %q", event.AssistantText.Text, "streaming chunk")
+	}
+}
+
+func TestParser_ContentBlockDelta_StreamingSequence(t *testing.T) {
+	// Test a sequence of streaming events
+	input := `{"type":"init","session_id":"abc"}
+{"content_block_delta":{"delta":{"text":"Hello, "}}}
+{"content_block_delta":{"delta":{"text":"how are "}}}
+{"content_block_delta":{"delta":{"text":"you?"}}}
+{"type":"result","session_id":"abc"}`
+
+	parser := NewParser(strings.NewReader(input))
+
+	// Init event
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() 1 returned error: %v", err)
+	}
+	if event.Type != EventInit {
+		t.Errorf("event 1 Type = %v, want %v", event.Type, EventInit)
+	}
+
+	// First chunk
+	event, err = parser.Next()
+	if err != nil {
+		t.Fatalf("Next() 2 returned error: %v", err)
+	}
+	if event.Type != EventAssistantText {
+		t.Errorf("event 2 Type = %v, want %v", event.Type, EventAssistantText)
+	}
+	if event.AssistantText.Text != "Hello, " {
+		t.Errorf("event 2 Text = %q, want %q", event.AssistantText.Text, "Hello, ")
+	}
+
+	// Second chunk
+	event, err = parser.Next()
+	if err != nil {
+		t.Fatalf("Next() 3 returned error: %v", err)
+	}
+	if event.Type != EventAssistantText {
+		t.Errorf("event 3 Type = %v, want %v", event.Type, EventAssistantText)
+	}
+	if event.AssistantText.Text != "how are " {
+		t.Errorf("event 3 Text = %q, want %q", event.AssistantText.Text, "how are ")
+	}
+
+	// Third chunk
+	event, err = parser.Next()
+	if err != nil {
+		t.Fatalf("Next() 4 returned error: %v", err)
+	}
+	if event.Type != EventAssistantText {
+		t.Errorf("event 4 Type = %v, want %v", event.Type, EventAssistantText)
+	}
+	if event.AssistantText.Text != "you?" {
+		t.Errorf("event 4 Text = %q, want %q", event.AssistantText.Text, "you?")
+	}
+
+	// Result event
+	event, err = parser.Next()
+	if err != nil {
+		t.Fatalf("Next() 5 returned error: %v", err)
+	}
+	if event.Type != EventResult {
+		t.Errorf("event 5 Type = %v, want %v", event.Type, EventResult)
 	}
 }
 

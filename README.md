@@ -1,127 +1,231 @@
 # Ralph
 
-Ralph is a terminal application that automates Claude Code sessions using a plan-based development workflow. It breaks a project plan into discrete tasks and iterates each through developer→reviewer cycles, using fresh Claude context windows for efficient handling of larger projects while maintaining code quality.
+Ralph is an iterative AI development tool that runs Claude Code in automated loops against a plan file. It creates isolated jj (jujutsu) commits for each iteration, tracks progress and learnings across sessions, and stops when the AI declares the work complete or hits the iteration limit.
+
+## Features
+
+- **Single-agent iterative loop**: Claude works through a plan, tracking progress and learnings between iterations
+- **Automatic version control**: Each iteration creates an isolated jj commit with AI-distilled commit messages
+- **Resume support**: Pick up where you left off - progress and learnings persist across sessions
+- **TUI interface**: Real-time visibility into Claude's work with Bubble Tea
+- **Task management**: View, export, and modify tasks on-the-fly during execution
+
+## Requirements
+
+- Go 1.22+
+- [Jujutsu](https://github.com/martinvonz/jj) (jj) for version control
+- Claude Code CLI (`claude` command)
+
+## Installation
+
+```bash
+go install github.com/gerund/ralph/cmd/ralph@latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/gerund/ralph
+cd ralph
+go build -o ralph ./cmd/ralph
+```
 
 ## Quick Start
 
 ```bash
-# Start a new project with a plan file
-ralph -c /path/to/plan.md
+# Start a new execution from a plan file
+ralph plan.md
 
-# Resume or select an existing project
-ralph
+# Start with custom iteration limit
+ralph plan.md --max-iterations 30
+
+# Resume an existing plan by ID
+ralph -r abc123
+ralph --resume abc123
 ```
 
 ## How It Works
 
-1. **Planning**: Provide a markdown plan file describing your development goals. Ralph breaks this into logical tasks.
+1. **Provide a plan**: Write a markdown file describing what you want to build
+2. **Ralph runs iterations**: Each iteration:
+   - Builds a prompt with the plan + current progress + learnings
+   - Creates a new jj change for isolation
+   - Runs Claude Code with the prompt
+   - Parses output for progress/learnings or completion marker
+   - Distills a commit message using Claude Haiku
+   - Commits the changes
+3. **Completion**: Loop ends when Claude outputs `DONE DONE DONE!!!` or hits max iterations
 
-2. **Execution**: For each task:
-   - Creates a new jujutsu change for isolation
-   - Developer agent implements the task
-   - Reviewer agent validates the work
-   - If issues are found, the developer iterates with structured feedback
-   - Task is marked complete when approved
+### Agent Output Format
 
-3. **User Review**: After all tasks complete, you can provide additional feedback to refine the work.
+Claude must output one of two formats:
 
-4. **Documentation**: Ralph captures learnings and updates project documentation automatically.
+**When done:**
+```
+DONE DONE DONE!!!
+```
+
+**When continuing:**
+```markdown
+## Progress
+What's been built, current state, completed items...
+
+## Learnings
+Insights about the codebase, patterns discovered, what didn't work...
+```
 
 ## Commands
 
-### Create a New Project
+### Main Commands
 
 ```bash
-ralph -c /path/to/plan.md
+# Run with a plan file
+ralph <plan-file>
+ralph plan.md --max-iterations 30
+
+# Resume existing execution
+ralph -r <plan-id>
+ralph --resume <plan-id>
 ```
-
-Reads a plan file, creates a new project, and launches the TUI to begin work.
-
-### Select/Resume a Project
-
-```bash
-ralph
-```
-
-Shows a list of existing projects to resume or continue working on.
-
-### Submit Feedback
-
-```bash
-ralph feedback -p <project-id> -f feedback.md
-```
-
-Submit feedback for a project while the TUI is not running. Restart the TUI to process the feedback.
 
 ### Task Management
 
 ```bash
-# List all tasks with status
+# List all tasks in a project
 ralph task list <project-id>
 
-# Export a task description
-ralph task export <project-id> <sequence>
-ralph task export <project-id> 3 -o task.md
+# Export task description
+ralph task export <project-id> <sequence>           # stdout
+ralph task export <project-id> <sequence> -o task.md  # file
+ralph task export <project-id> 3 --metadata=false      # without headers
 
-# Import/update a task description
+# Import/update task description  
 ralph task import <project-id> <sequence> <file>
-ralph task import <project-id> 3 -    # read from stdin
+ralph task import <project-id> <sequence> -        # from stdin
+ralph task import <project-id> 3 task.md -f        # skip confirmation
 ```
 
-Task status indicators: `[ ]` pending, `[~]` in-progress, `[x]` completed, `[!]` failed, `[^]` escalated
+Task status indicators:
+- `[ ]` pending
+- `[~]` in progress
+- `[x]` completed
+- `[!]` failed
+- `[^]` escalated
 
 ## Configuration
 
-Ralph uses an optional configuration file at `~/.config/ralph/config.json`:
+Ralph uses `~/.config/ralph/config.json` (optional):
 
 ```json
 {
   "projects_dir": "~/.local/share/ralph/projects",
-  "max_review_iterations": 5,
-  "max_task_attempts": 10,
-  "default_pause_mode": false,
+  "max_iterations": 20,
   "claude": {
     "model": "opus",
     "max_turns": 50,
-    "max_budget_usd": 10.0
-  },
-  "agents": {
-    "developer": "/path/to/custom/developer.md",
-    "reviewer": "/path/to/custom/reviewer.md",
-    "planner": "/path/to/custom/planner.md",
-    "documenter": "/path/to/custom/documenter.md"
+    "verbose": true
   }
 }
 ```
 
-| Option | Description |
-|--------|-------------|
-| `projects_dir` | Where project databases are stored |
-| `max_review_iterations` | Maximum developer→reviewer cycles per task |
-| `max_task_attempts` | Maximum attempts before failing a task |
-| `default_pause_mode` | Pause after each task for manual review |
-| `claude.model` | Claude model to use |
-| `claude.max_turns` | Maximum conversation turns per session |
-| `claude.max_budget_usd` | Budget limit per session |
-| `agents.*` | Custom prompt files for each agent type |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `projects_dir` | `~/.local/share/ralph/projects` | Database storage location |
+| `max_iterations` | `15` | Max iterations before stopping |
+| `claude.model` | `opus` | Claude model for development |
+| `claude.max_turns` | `50` | Max conversation turns per session |
+| `claude.verbose` | `true` | Show Claude CLI output |
 
-## Agents
+## Architecture
 
-Ralph uses four specialized agents:
+```
+cmd/ralph/
+├── main.go           # CLI entry point (cobra)
+├── task.go           # Task subcommand group
+├── task_list.go      # ralph task list
+├── task_export.go    # ralph task export  
+└── task_import.go    # ralph task import
 
-- **Planner**: Breaks the plan into discrete tasks
-- **Developer**: Implements each task given the plan and task description
-- **Reviewer**: Validates work and provides structured feedback
-- **Documenter**: Captures learnings and updates documentation
+internal/
+├── app/v2/           # App orchestration (connects loop to TUI)
+├── loop/             # Main iteration loop
+├── agent/            # Prompt construction
+├── parser/           # Output parsing (progress/learnings/done)
+├── distill/          # Commit message generation (Haiku)
+├── claude/           # Claude Code CLI wrapper
+├── jj/               # Jujutsu VCS wrapper
+├── db/               # SQLite persistence
+├── config/           # Configuration loading
+├── tui/v2/           # Bubble Tea TUI
+└── log/              # Structured logging
+```
 
-Custom agent prompts can be configured to customize behavior.
+### Core Components
 
-## Requirements
+**Loop** (`internal/loop/loop.go`)
+- Orchestrates the main iteration cycle
+- Emits events for TUI consumption
+- Handles context cancellation and max iterations
 
-- Go 1.21+
-- [Jujutsu](https://github.com/martinvonz/jj) (jj) for version control
-- Claude Code CLI
+**Agent Prompt** (`internal/agent/prompt.go`)
+- Builds prompts with plan + progress + learnings
+- Uses Go templates for consistent structure
 
-## Project Storage
+**Parser** (`internal/parser/parser.go`)
+- Extracts `## Progress` and `## Learnings` sections
+- Detects `DONE DONE DONE!!!` completion marker
+- Handles malformed output gracefully
 
-Each project gets a unique ID and SQLite database stored in the projects directory (default: `~/.local/share/ralph/projects/`). Projects can be resumed from any point, including after interruptions.
+**Distiller** (`internal/distill/distill.go`)
+- Uses Claude Haiku for fast commit message generation
+- Follows conventional commit format
+- Falls back gracefully on errors
+
+**Claude Client** (`internal/claude/client.go`)
+- Wraps the `claude` CLI command
+- Streams events via channels
+- Handles JSON-LD output parsing
+
+**JJ Client** (`internal/jj/jj.go`)
+- Wraps jujutsu commands (`jj new`, `jj commit`, `jj status`)
+- Detects repository and command availability
+
+## Data Storage
+
+Ralph stores data in SQLite databases:
+
+- **Plans**: Original plan content and metadata
+- **Sessions**: Each Claude invocation with input/output
+- **Events**: Raw Claude streaming events
+- **Progress**: Accumulated progress snapshots
+- **Learnings**: Accumulated learnings snapshots
+
+Default location: `~/.local/share/ralph/projects/ralph-v2.db`
+
+## Development
+
+```bash
+# Run tests
+go test ./...
+
+# Run tests with coverage
+go test ./... -cover
+
+# Lint
+golangci-lint run
+
+# Build
+go build ./cmd/ralph
+```
+
+## TUI Keybindings
+
+| Key | Action |
+|-----|--------|
+| `q` / `Ctrl+C` | Quit |
+| `↑` / `↓` | Scroll output |
+| `Tab` | Switch panels |
+
+## License
+
+MIT

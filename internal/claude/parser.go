@@ -13,6 +13,28 @@ type Parser struct {
 	scanner *bufio.Scanner
 }
 
+// parseCountOrArray parses a JSON value that can be either an int or an array,
+// returning the count (the int value or array length).
+func parseCountOrArray(data json.RawMessage) int {
+	if len(data) == 0 {
+		return 0
+	}
+
+	// Try parsing as int first
+	var count int
+	if err := json.Unmarshal(data, &count); err == nil {
+		return count
+	}
+
+	// Try parsing as array and return length
+	var arr []json.RawMessage
+	if err := json.Unmarshal(data, &arr); err == nil {
+		return len(arr)
+	}
+
+	return 0
+}
+
 // NewParser creates a new stream-JSON parser.
 func NewParser(r io.Reader) *Parser {
 	scanner := bufio.NewScanner(r)
@@ -63,14 +85,34 @@ func (p *Parser) parseLine(line []byte) (*StreamEvent, error) {
 		// This is a message event - check for tool_use content
 		return p.parseMessageEvent(event, &raw)
 
+	case raw.Type == "content_block_delta" || raw.ContentBlockDelta != nil:
+		// Streaming text delta from --include-partial-messages
+		event.Type = EventAssistantText
+		text := ""
+		if raw.ContentBlockDelta != nil {
+			if raw.ContentBlockDelta.Delta != nil && raw.ContentBlockDelta.Delta.Text != "" {
+				text = raw.ContentBlockDelta.Delta.Text
+			} else if raw.ContentBlockDelta.Text != "" {
+				text = raw.ContentBlockDelta.Text
+			}
+		}
+		event.AssistantText = &AssistantTextContent{Text: text}
+		return event, nil
+
+	case raw.Type == "assistant_message":
+		// Streaming assistant text event (alternative format)
+		event.Type = EventAssistantText
+		event.AssistantText = &AssistantTextContent{Text: ""}
+		return event, nil
+
 	case raw.Type == "init":
 		event.Type = EventInit
 		event.Init = &InitContent{
 			SessionID:  raw.SessionID,
 			Model:      raw.Model,
 			CWD:        raw.CWD,
-			Tools:      raw.Tools,
-			MCPServers: raw.MCPServers,
+			Tools:      parseCountOrArray(raw.Tools),
+			MCPServers: parseCountOrArray(raw.MCPServers),
 		}
 
 	case raw.Type == "result":

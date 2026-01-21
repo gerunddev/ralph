@@ -15,9 +15,9 @@ import (
 
 func TestNewClient(t *testing.T) {
 	cfg := ClientConfig{
-		Model:        "opus",
-		MaxTurns:     50,
-		MaxBudgetUSD: 10.0,
+		Model:    "opus",
+		MaxTurns: 50,
+		Verbose:  true,
 	}
 
 	client := NewClient(cfg)
@@ -31,8 +31,8 @@ func TestNewClient(t *testing.T) {
 	if client.maxTurns != 50 {
 		t.Errorf("client.maxTurns = %d, want %d", client.maxTurns, 50)
 	}
-	if client.maxBudgetUSD != 10.0 {
-		t.Errorf("client.maxBudgetUSD = %f, want %f", client.maxBudgetUSD, 10.0)
+	if !client.verbose {
+		t.Error("client.verbose = false, want true")
 	}
 	if client.commandCreator == nil {
 		t.Error("client.commandCreator is nil")
@@ -52,8 +52,8 @@ func TestNewClient_Defaults(t *testing.T) {
 	if client.maxTurns != 0 {
 		t.Errorf("client.maxTurns = %d, want 0", client.maxTurns)
 	}
-	if client.maxBudgetUSD != 0 {
-		t.Errorf("client.maxBudgetUSD = %f, want 0", client.maxBudgetUSD)
+	if client.verbose {
+		t.Error("client.verbose = true, want false")
 	}
 }
 
@@ -76,9 +76,9 @@ func mockCommandCreator(output string) (CommandCreator, *[][]string) {
 
 func TestClient_RunBuildsCorrectArguments(t *testing.T) {
 	cfg := ClientConfig{
-		Model:        "opus",
-		MaxTurns:     25,
-		MaxBudgetUSD: 5.5,
+		Model:    "opus",
+		MaxTurns: 25,
+		Verbose:  true,
 	}
 	client := NewClient(cfg)
 
@@ -89,7 +89,7 @@ func TestClient_RunBuildsCorrectArguments(t *testing.T) {
 	client.SetCommandCreator(creator)
 
 	ctx := context.Background()
-	session, err := client.Run(ctx, "test prompt", "system prompt")
+	session, err := client.Run(ctx, "test prompt")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -115,10 +115,9 @@ func TestClient_RunBuildsCorrectArguments(t *testing.T) {
 	expectedParts := []string{
 		"-p",
 		"--output-format stream-json",
+		"--verbose",
 		"--model opus",
 		"--max-turns 25",
-		"--max-budget-usd 5.5",
-		"--system-prompt system prompt",
 		"test prompt",
 	}
 
@@ -140,7 +139,7 @@ func TestClient_RunOmitsOptionalArguments(t *testing.T) {
 	client.SetCommandCreator(creator)
 
 	ctx := context.Background()
-	session, err := client.Run(ctx, "test prompt", "")
+	session, err := client.Run(ctx, "test prompt")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -157,18 +156,16 @@ func TestClient_RunOmitsOptionalArguments(t *testing.T) {
 	args := (*calls)[0]
 	argsStr := strings.Join(args, " ")
 
-	// These should NOT be present
+	// These should NOT be present when not configured
 	if strings.Contains(argsStr, "--model") {
 		t.Error("--model should not be present when model is empty")
 	}
 	if strings.Contains(argsStr, "--max-turns") {
 		t.Error("--max-turns should not be present when maxTurns is 0")
 	}
-	if strings.Contains(argsStr, "--max-budget-usd") {
-		t.Error("--max-budget-usd should not be present when maxBudgetUSD is 0")
-	}
-	if strings.Contains(argsStr, "--system-prompt") {
-		t.Error("--system-prompt should not be present when systemPrompt is empty")
+	// Note: --verbose is always required when using --output-format stream-json with -p
+	if !strings.Contains(argsStr, "--verbose") {
+		t.Error("--verbose should always be present (required for stream-json with -p)")
 	}
 }
 
@@ -188,7 +185,7 @@ func TestSession_EventsChannel(t *testing.T) {
 	client.SetCommandCreator(creator)
 
 	ctx := context.Background()
-	session, err := client.Run(ctx, "test", "")
+	session, err := client.Run(ctx, "test")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -245,7 +242,7 @@ func TestSession_Cancel(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	session, err := client.Run(ctx, "test", "")
+	session, err := client.Run(ctx, "test")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -272,7 +269,7 @@ func TestSession_ContextCancellation(t *testing.T) {
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	session, err := client.Run(ctx, "test", "")
+	session, err := client.Run(ctx, "test")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -303,7 +300,7 @@ func TestClient_CommandNotFound(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	_, err := client.Run(ctx, "test", "")
+	_, err := client.Run(ctx, "test")
 
 	// Note: The exact error depends on the system
 	// It should fail to start
@@ -325,7 +322,7 @@ func TestSession_DoneChannel(t *testing.T) {
 	client.SetCommandCreator(creator)
 
 	ctx := context.Background()
-	session, err := client.Run(ctx, "test", "")
+	session, err := client.Run(ctx, "test")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}
@@ -363,16 +360,16 @@ func TestIntegration_BasicRun(t *testing.T) {
 	}
 
 	cfg := ClientConfig{
-		Model:        "sonnet",
-		MaxTurns:     1,
-		MaxBudgetUSD: 0.10,
+		Model:    "sonnet",
+		MaxTurns: 1,
+		Verbose:  true,
 	}
 	client := NewClient(cfg)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	session, err := client.Run(ctx, "Say 'Hello' and nothing else", "You are a minimal assistant. Give very brief responses.")
+	session, err := client.Run(ctx, "Say 'Hello' and nothing else")
 	if err != nil {
 		t.Fatalf("Run() returned error: %v", err)
 	}

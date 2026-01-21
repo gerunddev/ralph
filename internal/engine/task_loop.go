@@ -15,8 +15,8 @@ import (
 )
 
 // eventChannelBufferSize is the buffer size for the task loop event channel.
-// A larger buffer helps prevent dropped events when the TUI is slow to consume.
-const eventChannelBufferSize = 250
+// Large buffer needed to prevent dropping Claude streaming events.
+const eventChannelBufferSize = 10000
 
 // TaskLoopDeps holds the dependencies for the task loop.
 type TaskLoopDeps struct {
