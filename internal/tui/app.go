@@ -589,6 +589,11 @@ func (m *Model) SetEvents(events <-chan loop.Event) {
 	m.events = events
 }
 
+// SetPlanID sets the plan ID in the header.
+func (m *Model) SetPlanID(id string) {
+	m.header.SetPlanID(id)
+}
+
 // SetPrompt sets the prompt content.
 func (m *Model) SetPrompt(prompt string) {
 	promptHeader := sectionDividerStyle.Render("─── Prompt ───")

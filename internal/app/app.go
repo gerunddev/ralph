@@ -300,6 +300,9 @@ func (a *App) runLoop(ctx context.Context) error {
 	// Create TUI with event channel
 	model := tui.NewModelWithEvents(a.loop.Events())
 
+	// Set the plan ID in the header
+	model.SetPlanID(a.plan.ID)
+
 	// Set prompt content (truncated for display)
 	promptPreview := a.plan.Content
 	if len(promptPreview) > 2000 {

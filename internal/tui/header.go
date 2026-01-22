@@ -13,6 +13,7 @@ type Header struct {
 	Iteration int
 	MaxIter   int
 	Status    string
+	PlanID    string
 	width     int
 }
 
@@ -37,6 +38,11 @@ func (h *Header) SetStatus(status string) {
 // SetWidth sets the component width.
 func (h *Header) SetWidth(w int) {
 	h.width = w
+}
+
+// SetPlanID sets the plan ID.
+func (h *Header) SetPlanID(id string) {
+	h.PlanID = id
 }
 
 // View renders the header.
@@ -69,6 +75,16 @@ func (h Header) View() string {
 	hints := h.renderKeyHints()
 
 	content := iterSection + separator + statusSection + separator + hints
+
+	// Add plan ID after key hints if set
+	if h.PlanID != "" {
+		// Truncate UUID to first 8 chars for display
+		shortID := h.PlanID
+		if len(shortID) > 8 {
+			shortID = shortID[:8]
+		}
+		content += separator + helpDescStyle.Render(shortID)
+	}
 
 	// Apply style with explicit width and safety cap
 	style := headerStyle.Width(styleWidth).MaxHeight(3)
