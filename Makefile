@@ -2,7 +2,7 @@
 
 BINARY_NAME := ralph
 BUILD_DIR := bin
-MAIN_PKG := ./cmd/ralph
+MAIN_PKG := .
 
 build:
 	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PKG)
