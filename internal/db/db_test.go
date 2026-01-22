@@ -1223,3 +1223,210 @@ func TestUpdateTaskDescription_UpdatesTimestamp(t *testing.T) {
 		t.Error("UpdateTaskDescription() did not update UpdatedAt timestamp")
 	}
 }
+
+// =============================================================================
+// Plan Tests
+// =============================================================================
+
+func TestCreatePlan(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:         "plan-1",
+		OriginPath: "/path/to/plan.md",
+		Content:    "Build the feature",
+	}
+
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	// Verify timestamps were set
+	if plan.CreatedAt.IsZero() {
+		t.Error("CreatePlan() did not set CreatedAt")
+	}
+	if plan.UpdatedAt.IsZero() {
+		t.Error("CreatePlan() did not set UpdatedAt")
+	}
+
+	// Verify default status
+	if plan.Status != PlanStatusPending {
+		t.Errorf("CreatePlan() status = %v, want %v", plan.Status, PlanStatusPending)
+	}
+}
+
+func TestCreatePlan_WithBaseChangeID(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:           "plan-1",
+		OriginPath:   "/path/to/plan.md",
+		Content:      "Build the feature",
+		BaseChangeID: "abc123",
+	}
+
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	got, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+
+	if got.BaseChangeID != "abc123" {
+		t.Errorf("CreatePlan().BaseChangeID = %v, want abc123", got.BaseChangeID)
+	}
+}
+
+func TestGetPlan(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:         "plan-1",
+		OriginPath: "/path/to/plan.md",
+		Content:    "Build the feature",
+		Status:     PlanStatusRunning,
+	}
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	got, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+
+	if got.ID != plan.ID {
+		t.Errorf("GetPlan().ID = %v, want %v", got.ID, plan.ID)
+	}
+	if got.OriginPath != plan.OriginPath {
+		t.Errorf("GetPlan().OriginPath = %v, want %v", got.OriginPath, plan.OriginPath)
+	}
+	if got.Content != plan.Content {
+		t.Errorf("GetPlan().Content = %v, want %v", got.Content, plan.Content)
+	}
+	if got.Status != PlanStatusRunning {
+		t.Errorf("GetPlan().Status = %v, want %v", got.Status, PlanStatusRunning)
+	}
+}
+
+func TestGetPlan_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	_, err := db.GetPlan("nonexistent")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetPlan() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpdatePlanStatus(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:         "plan-1",
+		OriginPath: "/path/to/plan.md",
+		Content:    "Plan content",
+	}
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	if err := db.UpdatePlanStatus("plan-1", PlanStatusCompleted); err != nil {
+		t.Fatalf("UpdatePlanStatus() returned error: %v", err)
+	}
+
+	got, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+	if got.Status != PlanStatusCompleted {
+		t.Errorf("UpdatePlanStatus() status = %v, want %v", got.Status, PlanStatusCompleted)
+	}
+}
+
+func TestUpdatePlanStatus_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	err := db.UpdatePlanStatus("nonexistent", PlanStatusCompleted)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdatePlanStatus() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpdatePlanBaseChangeID(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:         "plan-1",
+		OriginPath: "/path/to/plan.md",
+		Content:    "Plan content",
+	}
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	// Verify initial BaseChangeID is empty
+	got, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+	if got.BaseChangeID != "" {
+		t.Errorf("Initial BaseChangeID = %v, want empty", got.BaseChangeID)
+	}
+
+	// Update BaseChangeID
+	if err := db.UpdatePlanBaseChangeID("plan-1", "xyz789"); err != nil {
+		t.Fatalf("UpdatePlanBaseChangeID() returned error: %v", err)
+	}
+
+	got, err = db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+	if got.BaseChangeID != "xyz789" {
+		t.Errorf("UpdatePlanBaseChangeID() base_change_id = %v, want xyz789", got.BaseChangeID)
+	}
+}
+
+func TestUpdatePlanBaseChangeID_NotFound(t *testing.T) {
+	db := newTestDB(t)
+
+	err := db.UpdatePlanBaseChangeID("nonexistent", "abc123")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdatePlanBaseChangeID() error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUpdatePlanBaseChangeID_UpdatesTimestamp(t *testing.T) {
+	db := newTestDB(t)
+
+	plan := &Plan{
+		ID:         "plan-1",
+		OriginPath: "/path/to/plan.md",
+		Content:    "Plan content",
+	}
+	if err := db.CreatePlan(plan); err != nil {
+		t.Fatalf("CreatePlan() returned error: %v", err)
+	}
+
+	original, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+	originalUpdatedAt := original.UpdatedAt
+
+	time.Sleep(10 * time.Millisecond)
+
+	if err := db.UpdatePlanBaseChangeID("plan-1", "abc123"); err != nil {
+		t.Fatalf("UpdatePlanBaseChangeID() returned error: %v", err)
+	}
+
+	updated, err := db.GetPlan("plan-1")
+	if err != nil {
+		t.Fatalf("GetPlan() returned error: %v", err)
+	}
+	if !updated.UpdatedAt.After(originalUpdatedAt) {
+		t.Error("UpdatePlanBaseChangeID() did not update UpdatedAt timestamp")
+	}
+}

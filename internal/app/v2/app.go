@@ -1,4 +1,4 @@
-// Package v2 provides the application orchestration for Ralph V2.
+// Package v2 provides the application orchestration for Ralph.
 // It connects the main execution loop to the TUI, handling the full lifecycle.
 package v2
 
@@ -23,7 +23,7 @@ import (
 	tui "github.com/gerund/ralph/internal/tui/v2"
 )
 
-// App orchestrates the V2 single-agent loop and TUI.
+// App orchestrates the main execution loop and TUI.
 type App struct {
 	cfg     *config.Config
 	db      *db.DB
@@ -55,7 +55,7 @@ type Config struct {
 	MaxIterationsOverride int
 }
 
-// New creates a new V2 App.
+// New creates a new App.
 func New(cfg Config) (*App, error) {
 	// Load configuration
 	appConfig, err := config.Load()
@@ -141,8 +141,8 @@ func (a *App) initDependencies() error {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	// Use centralized database for V2
-	dbPath := filepath.Join(dbDir, "ralph-v2.db")
+	// Use centralized database
+	dbPath := filepath.Join(dbDir, "ralph.db")
 	database, err := db.New(dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)

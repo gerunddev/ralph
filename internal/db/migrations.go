@@ -73,17 +73,18 @@ CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_feedback_session ON feedback(session_id);
 
--- V2 Schema: Plans table (simplified from V1 projects)
+-- Plans table
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
     origin_path TEXT NOT NULL,
     content TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
+    base_change_id TEXT NOT NULL DEFAULT '',
     created_at DATETIME NOT NULL,
     updated_at DATETIME NOT NULL
 );
 
--- V2 Schema: Sessions linked directly to plans
+-- Plan sessions table
 CREATE TABLE IF NOT EXISTS plan_sessions (
     id TEXT PRIMARY KEY,
     plan_id TEXT NOT NULL,
@@ -97,7 +98,7 @@ CREATE TABLE IF NOT EXISTS plan_sessions (
     FOREIGN KEY (plan_id) REFERENCES plans(id)
 );
 
--- V2 Schema: Events (stream events from Claude)
+-- Events table (stream events from Claude)
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
@@ -108,7 +109,7 @@ CREATE TABLE IF NOT EXISTS events (
     FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
 );
 
--- V2 Schema: Progress tracking
+-- Progress tracking table
 CREATE TABLE IF NOT EXISTS progress (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id TEXT NOT NULL,
@@ -119,7 +120,7 @@ CREATE TABLE IF NOT EXISTS progress (
     FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
 );
 
--- V2 Schema: Learnings tracking
+-- Learnings tracking table
 CREATE TABLE IF NOT EXISTS learnings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id TEXT NOT NULL,
@@ -130,7 +131,7 @@ CREATE TABLE IF NOT EXISTS learnings (
     FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
 );
 
--- V1.5 Schema: Reviewer feedback storage
+-- Reviewer feedback table
 CREATE TABLE IF NOT EXISTS reviewer_feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     plan_id TEXT NOT NULL,
@@ -141,7 +142,7 @@ CREATE TABLE IF NOT EXISTS reviewer_feedback (
     FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
 );
 
--- V2 Indexes
+-- Plan-related indexes
 CREATE INDEX IF NOT EXISTS idx_plan_sessions_plan ON plan_sessions(plan_id);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_progress_plan ON progress(plan_id);
@@ -190,6 +191,17 @@ func (d *DB) runMigrations() error {
 	} else if !exists {
 		if _, err := d.conn.Exec(`
 			ALTER TABLE plan_sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'developer';
+		`); err != nil {
+			return err
+		}
+	}
+
+	// Migration: Add base_change_id column to plans table for cumulative reviewer diffs
+	if exists, err := d.columnExists("plans", "base_change_id"); err != nil {
+		return err
+	} else if !exists {
+		if _, err := d.conn.Exec(`
+			ALTER TABLE plans ADD COLUMN base_change_id TEXT NOT NULL DEFAULT '';
 		`); err != nil {
 			return err
 		}

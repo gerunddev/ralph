@@ -1,4 +1,4 @@
-// Package tui provides the Bubble Tea TUI for Ralph V2 single-agent loop.
+// Package tui provides the Bubble Tea TUI for Ralph.
 package tui
 
 import (
@@ -41,10 +41,14 @@ func (h *Header) SetWidth(w int) {
 
 // View renders the header.
 func (h Header) View() string {
-	contentWidth := h.width - 4 // Account for border padding
-	if contentWidth < 40 {
-		contentWidth = 40
+	// Border takes 2 chars, padding takes 2 chars (1 each side)
+	// But Width() in lipgloss includes padding, so we subtract border only for outer width
+	// and subtract padding for inner content calculation
+	outerWidth := h.width - 2 // Subtract border (1 char each side)
+	if outerWidth < 40 {
+		outerWidth = 40
 	}
+	innerWidth := outerWidth - 2 // Subtract padding (1 char each side)
 
 	// Left side: Iteration + Status
 	iterStr := "---"
@@ -65,17 +69,17 @@ func (h Header) View() string {
 	// Right side: Key hints
 	hints := h.renderKeyHints()
 
-	// Calculate spacing
+	// Calculate spacing to push hints to the right
 	leftWidth := lipgloss.Width(leftContent)
 	hintsWidth := lipgloss.Width(hints)
-	spacing := contentWidth - leftWidth - hintsWidth
+	spacing := innerWidth - leftWidth - hintsWidth
 	if spacing < 1 {
 		spacing = 1
 	}
 
 	content := leftContent + strings.Repeat(" ", spacing) + hints
 
-	style := headerStyle.Width(contentWidth)
+	style := headerStyle.Width(outerWidth)
 	return style.Render(content)
 }
 
@@ -89,7 +93,11 @@ func (h Header) renderStatus() string {
 	switch strings.ToLower(status) {
 	case "running", "in progress":
 		return statusRunningStyle.Render(status)
-	case "completed", "done":
+	case "developing":
+		return statusDevelopingStyle.Render(status)
+	case "reviewing":
+		return statusReviewingStyle.Render(status)
+	case "completed", "done", "complete":
 		return statusCompletedStyle.Render(status)
 	case "failed", "error":
 		return statusFailedStyle.Render(status)

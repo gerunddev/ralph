@@ -127,11 +127,7 @@ type Feedback struct {
 	CreatedAt    time.Time
 }
 
-// =============================================================================
-// V2 Models
-// =============================================================================
-
-// PlanStatus represents the status of a plan (V2).
+// PlanStatus represents the status of a plan.
 type PlanStatus string
 
 const (
@@ -141,7 +137,7 @@ const (
 	PlanStatusFailed    PlanStatus = "failed"
 )
 
-// PlanSessionStatus represents the status of a plan session (V2).
+// PlanSessionStatus represents the status of a plan session.
 type PlanSessionStatus string
 
 const (
@@ -150,25 +146,26 @@ const (
 	PlanSessionFailed    PlanSessionStatus = "failed"
 )
 
-// V15AgentType represents the type of agent in a V1.5 loop session.
-type V15AgentType string
+// LoopAgentType represents the type of agent in a loop session.
+type LoopAgentType string
 
 const (
-	V15AgentDeveloper V15AgentType = "developer"
-	V15AgentReviewer  V15AgentType = "reviewer"
+	LoopAgentDeveloper LoopAgentType = "developer"
+	LoopAgentReviewer  LoopAgentType = "reviewer"
 )
 
-// Plan represents a V2 plan (simplified from V1 project).
+// Plan represents a plan to be executed.
 type Plan struct {
-	ID         string
-	OriginPath string
-	Content    string
-	Status     PlanStatus
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID           string
+	OriginPath   string
+	Content      string
+	Status       PlanStatus
+	BaseChangeID string // jj change ID captured at plan start, used for cumulative reviewer diffs
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
-// PlanSession represents a Claude session linked to a plan (V2).
+// PlanSession represents a Claude session linked to a plan.
 type PlanSession struct {
 	ID          string
 	PlanID      string
@@ -176,12 +173,12 @@ type PlanSession struct {
 	InputPrompt string
 	FinalOutput string
 	Status      PlanSessionStatus
-	AgentType   V15AgentType // V1.5: "developer" or "reviewer", empty for V2
+	AgentType   LoopAgentType // "developer" or "reviewer"
 	CreatedAt   time.Time
 	CompletedAt *time.Time
 }
 
-// Event represents a stream event from Claude (V2).
+// Event represents a stream event from Claude.
 type Event struct {
 	ID        int64
 	SessionID string
@@ -191,7 +188,7 @@ type Event struct {
 	CreatedAt time.Time
 }
 
-// Progress represents a progress snapshot (V2).
+// Progress represents a progress snapshot.
 type Progress struct {
 	ID        int64
 	PlanID    string
@@ -200,7 +197,7 @@ type Progress struct {
 	CreatedAt time.Time
 }
 
-// Learnings represents a learnings snapshot (V2).
+// Learnings represents a learnings snapshot.
 type Learnings struct {
 	ID        int64
 	PlanID    string
@@ -209,7 +206,7 @@ type Learnings struct {
 	CreatedAt time.Time
 }
 
-// ReviewerFeedback represents feedback from a V1.5 reviewer rejection.
+// ReviewerFeedback represents feedback from a reviewer rejection.
 type ReviewerFeedback struct {
 	ID        int64
 	PlanID    string

@@ -1,4 +1,4 @@
-// Package tui provides the Bubble Tea TUI for Ralph V2 single-agent loop.
+// Package tui provides the Bubble Tea TUI for Ralph.
 package tui
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/gerund/ralph/internal/parser"
 )
 
-// Model is the main Bubble Tea model for the Ralph V2 TUI.
+// Model is the main Bubble Tea model for the Ralph TUI.
 type Model struct {
 	header         Header
 	feedPanel      *ScrollablePanel
@@ -291,6 +291,20 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 
 	case loop.EventIterationEnd:
 		m.feedPanel.AppendLine(systemMessageStyle.Render("Iteration complete"))
+
+	case loop.EventDeveloperStart:
+		m.status = "Developing"
+		m.header.SetStatus("Developing")
+
+	case loop.EventDeveloperEnd:
+		// Status will be updated by reviewer start or done event
+
+	case loop.EventReviewerStart:
+		m.status = "Reviewing"
+		m.header.SetStatus("Reviewing")
+
+	case loop.EventReviewerEnd:
+		// Status will be updated by next event
 
 	case loop.EventDone:
 		m.completed = true

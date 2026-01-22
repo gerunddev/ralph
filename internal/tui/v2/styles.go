@@ -1,4 +1,4 @@
-// Package tui provides the Bubble Tea TUI for Ralph V2 single-agent loop.
+// Package tui provides the Bubble Tea TUI for Ralph.
 package tui
 
 import "github.com/charmbracelet/lipgloss"
@@ -11,6 +11,8 @@ var (
 	colorRed        = lipgloss.Color("#ff6188")
 	colorMagenta    = lipgloss.Color("#ab9df2")
 	colorGreen      = lipgloss.Color("#a9dc76")
+	colorCyan       = lipgloss.Color("#78dce8")
+	colorLightCyan  = lipgloss.Color("#a1eaf8")
 	colorGray       = lipgloss.Color("#727072")
 	colorDimGray    = lipgloss.Color("#5b595c")
 )
@@ -81,6 +83,14 @@ var (
 				Foreground(colorOrange).
 				Bold(true)
 
+	statusDevelopingStyle = lipgloss.NewStyle().
+				Foreground(colorCyan).
+				Bold(true)
+
+	statusReviewingStyle = lipgloss.NewStyle().
+				Foreground(colorMagenta).
+				Bold(true)
+
 	statusCompletedStyle = lipgloss.NewStyle().
 				Foreground(colorGreen).
 				Bold(true)
@@ -129,10 +139,6 @@ var (
 
 // Message content styles - for aesthetic formatting of Claude session output
 var (
-	// Tool call styling - cyan/blue tones for tool invocations
-	colorCyan      = lipgloss.Color("#78dce8")
-	colorLightCyan = lipgloss.Color("#a1eaf8")
-
 	toolNameStyle = lipgloss.NewStyle().
 			Foreground(colorCyan).
 			Bold(true)

@@ -711,10 +711,10 @@ Work in progress.
 }
 
 // =============================================================================
-// V1.5 Developer Output Tests
+// Developer Output Tests
 // =============================================================================
 
-func TestParseV15Output_DevDone_InStatus(t *testing.T) {
+func TestParseAgentOutput_DevDone_InStatus(t *testing.T) {
 	input := `## Progress
 Completed all tasks for the feature.
 
@@ -724,7 +724,7 @@ Found the correct patterns.
 ## Status
 DEV_DONE DEV_DONE DEV_DONE!!!`
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if !result.DevDone {
 		t.Error("DevDone should be true when DEV_DONE marker is in status section")
@@ -737,21 +737,21 @@ DEV_DONE DEV_DONE DEV_DONE!!!`
 	}
 }
 
-func TestParseV15Output_DevDone_Anywhere(t *testing.T) {
+func TestParseAgentOutput_DevDone_Anywhere(t *testing.T) {
 	// DEV_DONE marker anywhere in output
 	input := `## Progress
 Everything is complete.
 
 DEV_DONE DEV_DONE DEV_DONE!!!`
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if !result.DevDone {
 		t.Error("DevDone should be true for backwards compatibility")
 	}
 }
 
-func TestParseV15Output_DevRunning(t *testing.T) {
+func TestParseAgentOutput_DevRunning(t *testing.T) {
 	input := `## Progress
 Still working on the feature.
 
@@ -761,7 +761,7 @@ Understanding the codebase.
 ## Status
 RUNNING RUNNING RUNNING`
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if result.DevDone {
 		t.Error("DevDone should be false when status is RUNNING")
@@ -771,19 +771,19 @@ RUNNING RUNNING RUNNING`
 	}
 }
 
-func TestParseV15Output_DevNotDone_ExtraExclamation(t *testing.T) {
+func TestParseAgentOutput_DevNotDone_ExtraExclamation(t *testing.T) {
 	// Extra exclamation marks should not match
 	input := `## Status
 DEV_DONE DEV_DONE DEV_DONE!!!!`
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if result.DevDone {
 		t.Error("DevDone should be false with extra exclamation marks")
 	}
 }
 
-func TestParseV15Output_DevNotDone_Incomplete(t *testing.T) {
+func TestParseAgentOutput_DevNotDone_Incomplete(t *testing.T) {
 	tests := []string{
 		"DEV_DONE DEV_DONE DEV_DONE",   // Missing !!!
 		"DEV_DONE DEV_DONE DEV_DONE!",  // Wrong number
@@ -791,18 +791,18 @@ func TestParseV15Output_DevNotDone_Incomplete(t *testing.T) {
 	}
 
 	for _, input := range tests {
-		result := ParseV15Output(input, "developer")
+		result := ParseAgentOutput(input, "developer")
 		if result.DevDone {
 			t.Errorf("DevDone should be false for %q", input)
 		}
 	}
 }
 
-func TestParseV15Output_DevMalformedOutput(t *testing.T) {
+func TestParseAgentOutput_DevMalformedOutput(t *testing.T) {
 	// No recognized sections - should treat as progress
 	input := "Just some text without any headers."
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if result.DevDone {
 		t.Error("DevDone should be false for malformed output")
@@ -813,10 +813,10 @@ func TestParseV15Output_DevMalformedOutput(t *testing.T) {
 }
 
 // =============================================================================
-// V1.5 Reviewer Output Tests
+// Reviewer Output Tests
 // =============================================================================
 
-func TestParseV15Output_ReviewerApproved_InVerdict(t *testing.T) {
+func TestParseAgentOutput_ReviewerApproved_InVerdict(t *testing.T) {
 	input := `## Progress
 Reviewed all changes.
 
@@ -835,7 +835,7 @@ None
 ### Verdict
 REVIEWER_APPROVED REVIEWER_APPROVED!!!`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if !result.ReviewerApproved {
 		t.Error("ReviewerApproved should be true")
@@ -845,32 +845,32 @@ REVIEWER_APPROVED REVIEWER_APPROVED!!!`
 	}
 }
 
-func TestParseV15Output_ReviewerApproved_InStatus(t *testing.T) {
+func TestParseAgentOutput_ReviewerApproved_InStatus(t *testing.T) {
 	input := `## Progress
 Review complete.
 
 ## Status
 REVIEWER_APPROVED REVIEWER_APPROVED!!!`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if !result.ReviewerApproved {
 		t.Error("ReviewerApproved should be true when in status section")
 	}
 }
 
-func TestParseV15Output_ReviewerApproved_Anywhere(t *testing.T) {
+func TestParseAgentOutput_ReviewerApproved_Anywhere(t *testing.T) {
 	input := `Reviewed the code.
 REVIEWER_APPROVED REVIEWER_APPROVED!!!`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if !result.ReviewerApproved {
 		t.Error("ReviewerApproved should be true for backwards compatibility")
 	}
 }
 
-func TestParseV15Output_ReviewerFeedback_WithPrefix(t *testing.T) {
+func TestParseAgentOutput_ReviewerFeedback_WithPrefix(t *testing.T) {
 	input := `## Progress
 Found issues during review.
 
@@ -886,7 +886,7 @@ None
 ### Verdict
 REVIEWER_FEEDBACK: The login function needs proper error handling for database failures.`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false when feedback given")
@@ -896,11 +896,11 @@ REVIEWER_FEEDBACK: The login function needs proper error handling for database f
 	}
 }
 
-func TestParseV15Output_ReviewerFeedback_ExactTestCase(t *testing.T) {
-	// This is the exact output from TestLoopV15_ReviewerRejects
+func TestParseAgentOutput_ReviewerFeedback_ExactTestCase(t *testing.T) {
+	// This is the exact output from TestLoop_ReviewerRejects
 	input := "## Progress\nReviewed code\n\n### Critical Issues\nNone\n\n### Major Issues\n- Missing error handling in auth.go:42\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_FEEDBACK: Fix the error handling issue"
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false when feedback given")
@@ -913,7 +913,7 @@ func TestParseV15Output_ReviewerFeedback_ExactTestCase(t *testing.T) {
 	}
 }
 
-func TestParseV15Output_ReviewerFeedback_FromIssueSections(t *testing.T) {
+func TestParseAgentOutput_ReviewerFeedback_FromIssueSections(t *testing.T) {
 	input := `## Progress
 Found issues during review.
 
@@ -929,7 +929,7 @@ None
 ### Verdict
 Fix the issues above.`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false")
@@ -947,22 +947,22 @@ Fix the issues above.`
 	}
 }
 
-func TestParseV15Output_ReviewerNotApproved_ExtraExclamation(t *testing.T) {
+func TestParseAgentOutput_ReviewerNotApproved_ExtraExclamation(t *testing.T) {
 	input := `### Verdict
 REVIEWER_APPROVED REVIEWER_APPROVED!!!!`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false with extra exclamation marks")
 	}
 }
 
-func TestParseV15Output_ReviewerFallbackFeedback(t *testing.T) {
+func TestParseAgentOutput_ReviewerFallbackFeedback(t *testing.T) {
 	// No structured sections - use entire output as feedback
 	input := "The code has problems with error handling."
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false")
@@ -973,7 +973,7 @@ func TestParseV15Output_ReviewerFallbackFeedback(t *testing.T) {
 	}
 }
 
-func TestParseV15Output_ReviewerAllIssueTypesExtracted(t *testing.T) {
+func TestParseAgentOutput_ReviewerAllIssueTypesExtracted(t *testing.T) {
 	input := `### Critical Issues
 Security vulnerability found
 
@@ -983,7 +983,7 @@ Logic error detected
 ### Minor Issues
 Style inconsistency`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false")
@@ -1000,7 +1000,7 @@ Style inconsistency`
 	}
 }
 
-func TestParseV15Output_ReviewerIssuesNoneNotIncluded(t *testing.T) {
+func TestParseAgentOutput_ReviewerIssuesNoneNotIncluded(t *testing.T) {
 	input := `### Critical Issues
 None
 
@@ -1010,7 +1010,7 @@ None
 ### Minor Issues
 None`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	// No actual issues, but also no approval marker
 	if result.ReviewerApproved {
@@ -1025,34 +1025,34 @@ None`
 	}
 }
 
-func TestParseV15Output_PreservesRaw(t *testing.T) {
+func TestParseAgentOutput_PreservesRaw(t *testing.T) {
 	input := "  Original with whitespace  "
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if result.Raw != input {
 		t.Errorf("Raw = %q, want %q", result.Raw, input)
 	}
 }
 
-func TestParseV15Output_IgnoresOldDoneMarker(t *testing.T) {
+func TestParseAgentOutput_IgnoresOldDoneMarker(t *testing.T) {
 	// Developer should only react to DEV_DONE, not DONE DONE DONE!!!
 	input := `## Status
 DONE DONE DONE!!!`
 
-	result := ParseV15Output(input, "developer")
+	result := ParseAgentOutput(input, "developer")
 
 	if result.DevDone {
 		t.Error("DevDone should be false for old DONE marker (should use DEV_DONE)")
 	}
 }
 
-func TestParseV15Output_ReviewerIgnoresDevDone(t *testing.T) {
+func TestParseAgentOutput_ReviewerIgnoresDevDone(t *testing.T) {
 	// Reviewer should only react to REVIEWER_APPROVED, not DEV_DONE
 	input := `## Status
 DEV_DONE DEV_DONE DEV_DONE!!!`
 
-	result := ParseV15Output(input, "reviewer")
+	result := ParseAgentOutput(input, "reviewer")
 
 	if result.ReviewerApproved {
 		t.Error("ReviewerApproved should be false for DEV_DONE marker")

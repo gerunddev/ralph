@@ -699,7 +699,7 @@ func (d *DB) UpdateTaskDescription(taskID string, description string) error {
 }
 
 // =============================================================================
-// V2 Plan Methods
+// Plan Methods
 // =============================================================================
 
 // CreatePlan inserts a new plan into the database.
@@ -712,9 +712,9 @@ func (d *DB) CreatePlan(plan *Plan) error {
 	}
 
 	_, err := d.conn.Exec(`
-		INSERT INTO plans (id, origin_path, content, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)`,
-		plan.ID, plan.OriginPath, plan.Content, plan.Status, plan.CreatedAt, plan.UpdatedAt,
+		INSERT INTO plans (id, origin_path, content, status, base_change_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		plan.ID, plan.OriginPath, plan.Content, plan.Status, plan.BaseChangeID, plan.CreatedAt, plan.UpdatedAt,
 	)
 	return err
 }
@@ -723,10 +723,10 @@ func (d *DB) CreatePlan(plan *Plan) error {
 func (d *DB) GetPlan(id string) (*Plan, error) {
 	plan := &Plan{}
 	err := d.conn.QueryRow(`
-		SELECT id, origin_path, content, status, created_at, updated_at
+		SELECT id, origin_path, content, status, base_change_id, created_at, updated_at
 		FROM plans WHERE id = ?`, id,
 	).Scan(
-		&plan.ID, &plan.OriginPath, &plan.Content, &plan.Status,
+		&plan.ID, &plan.OriginPath, &plan.Content, &plan.Status, &plan.BaseChangeID,
 		&plan.CreatedAt, &plan.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -757,8 +757,29 @@ func (d *DB) UpdatePlanStatus(id string, status PlanStatus) error {
 	return nil
 }
 
+// UpdatePlanBaseChangeID updates a plan's base_change_id and updated_at timestamp.
+// This is called once when the plan first starts to capture the jj change ID
+// for computing cumulative diffs during review.
+func (d *DB) UpdatePlanBaseChangeID(id string, baseChangeID string) error {
+	result, err := d.conn.Exec(`
+		UPDATE plans SET base_change_id = ?, updated_at = ? WHERE id = ?`,
+		baseChangeID, time.Now(), id,
+	)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // =============================================================================
-// V2 Plan Session Methods
+// Plan Session Methods
 // =============================================================================
 
 // CreatePlanSession inserts a new plan session into the database.
@@ -768,7 +789,7 @@ func (d *DB) CreatePlanSession(session *PlanSession) error {
 		session.Status = PlanSessionRunning
 	}
 	if session.AgentType == "" {
-		session.AgentType = V15AgentDeveloper
+		session.AgentType = LoopAgentDeveloper
 	}
 
 	_, err := d.conn.Exec(`
@@ -867,7 +888,7 @@ func (d *DB) GetLatestPlanSession(planID string) (*PlanSession, error) {
 }
 
 // =============================================================================
-// V2 Event Methods
+// Event Methods
 // =============================================================================
 
 // CreateEvent inserts a new event into the database.
@@ -920,7 +941,7 @@ func (d *DB) GetEventsBySession(sessionID string) ([]*Event, error) {
 }
 
 // =============================================================================
-// V2 Progress Methods
+// Progress Methods
 // =============================================================================
 
 // CreateProgress inserts a new progress record into the database.
@@ -991,7 +1012,7 @@ func (d *DB) GetProgressHistory(planID string) ([]*Progress, error) {
 }
 
 // =============================================================================
-// V2 Learnings Methods
+// Learnings Methods
 // =============================================================================
 
 // CreateLearnings inserts a new learnings record into the database.
@@ -1062,7 +1083,7 @@ func (d *DB) GetLearningsHistory(planID string) ([]*Learnings, error) {
 }
 
 // =============================================================================
-// V1.5 Reviewer Feedback Methods
+// Reviewer Feedback Methods
 // =============================================================================
 
 // CreateReviewerFeedback inserts a new reviewer feedback record into the database.

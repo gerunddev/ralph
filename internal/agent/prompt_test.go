@@ -436,18 +436,18 @@ func TestBuildPrompt_LongContent(t *testing.T) {
 }
 
 // =============================================================================
-// V1.5 Developer Prompt Tests
+// Developer Prompt Tests
 // =============================================================================
 
-func TestBuildV15DeveloperPrompt_AllFieldsPopulated(t *testing.T) {
-	ctx := V15DeveloperContext{
+func TestBuildDeveloperPrompt_AllFieldsPopulated(t *testing.T) {
+	ctx := DeveloperContext{
 		PlanContent:      "Build a REST API with authentication",
 		Progress:         "Completed user model",
 		Learnings:        "Uses GORM for database",
 		ReviewerFeedback: "",
 	}
 
-	result, err := BuildV15DeveloperPrompt(ctx)
+	result, err := BuildDeveloperPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -499,15 +499,15 @@ func TestBuildV15DeveloperPrompt_AllFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestBuildV15DeveloperPrompt_WithReviewerFeedback(t *testing.T) {
-	ctx := V15DeveloperContext{
+func TestBuildDeveloperPrompt_WithReviewerFeedback(t *testing.T) {
+	ctx := DeveloperContext{
 		PlanContent:      "Build an API",
 		Progress:         "In progress",
 		Learnings:        "Learning things",
 		ReviewerFeedback: "Missing error handling in auth.go:42",
 	}
 
-	result, err := BuildV15DeveloperPrompt(ctx)
+	result, err := BuildDeveloperPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -524,14 +524,14 @@ func TestBuildV15DeveloperPrompt_WithReviewerFeedback(t *testing.T) {
 	}
 }
 
-func TestBuildV15DeveloperPrompt_EmptyPlan(t *testing.T) {
-	ctx := V15DeveloperContext{
+func TestBuildDeveloperPrompt_EmptyPlan(t *testing.T) {
+	ctx := DeveloperContext{
 		PlanContent: "",
 		Progress:    "Some progress",
 		Learnings:   "Some learnings",
 	}
 
-	_, err := BuildV15DeveloperPrompt(ctx)
+	_, err := BuildDeveloperPrompt(ctx)
 	if err == nil {
 		t.Fatal("expected error for empty PlanContent")
 	}
@@ -541,15 +541,15 @@ func TestBuildV15DeveloperPrompt_EmptyPlan(t *testing.T) {
 	}
 }
 
-func TestBuildV15DeveloperPrompt_Fallbacks(t *testing.T) {
-	ctx := V15DeveloperContext{
+func TestBuildDeveloperPrompt_Fallbacks(t *testing.T) {
+	ctx := DeveloperContext{
 		PlanContent:      "Test plan",
 		Progress:         "",
 		Learnings:        "",
 		ReviewerFeedback: "",
 	}
 
-	result, err := BuildV15DeveloperPrompt(ctx)
+	result, err := BuildDeveloperPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -563,15 +563,15 @@ func TestBuildV15DeveloperPrompt_Fallbacks(t *testing.T) {
 	}
 }
 
-func TestBuildV15DeveloperPrompt_WhitespaceNormalized(t *testing.T) {
-	ctx := V15DeveloperContext{
+func TestBuildDeveloperPrompt_WhitespaceNormalized(t *testing.T) {
+	ctx := DeveloperContext{
 		PlanContent:      "Test plan",
 		Progress:         "   ",
 		Learnings:        "\t\n",
 		ReviewerFeedback: "  \n  ",
 	}
 
-	result, err := BuildV15DeveloperPrompt(ctx)
+	result, err := BuildDeveloperPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -590,11 +590,11 @@ func TestBuildV15DeveloperPrompt_WhitespaceNormalized(t *testing.T) {
 }
 
 // =============================================================================
-// V1.5 Reviewer Prompt Tests
+// Reviewer Prompt Tests
 // =============================================================================
 
-func TestBuildV15ReviewerPrompt_AllFieldsPopulated(t *testing.T) {
-	ctx := V15ReviewerContext{
+func TestBuildReviewerPrompt_AllFieldsPopulated(t *testing.T) {
+	ctx := ReviewerContext{
 		PlanContent:      "Build a REST API",
 		Progress:         "Completed implementation",
 		Learnings:        "Uses Go patterns",
@@ -602,7 +602,7 @@ func TestBuildV15ReviewerPrompt_AllFieldsPopulated(t *testing.T) {
 		DeveloperSummary: "Added user creation endpoint",
 	}
 
-	result, err := BuildV15ReviewerPrompt(ctx)
+	result, err := BuildReviewerPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -671,15 +671,15 @@ func TestBuildV15ReviewerPrompt_AllFieldsPopulated(t *testing.T) {
 	}
 }
 
-func TestBuildV15ReviewerPrompt_EmptyPlan(t *testing.T) {
-	ctx := V15ReviewerContext{
+func TestBuildReviewerPrompt_EmptyPlan(t *testing.T) {
+	ctx := ReviewerContext{
 		PlanContent: "",
 		Progress:    "Some progress",
 		Learnings:   "Some learnings",
 		DiffOutput:  "some diff",
 	}
 
-	_, err := BuildV15ReviewerPrompt(ctx)
+	_, err := BuildReviewerPrompt(ctx)
 	if err == nil {
 		t.Fatal("expected error for empty PlanContent")
 	}
@@ -689,8 +689,8 @@ func TestBuildV15ReviewerPrompt_EmptyPlan(t *testing.T) {
 	}
 }
 
-func TestBuildV15ReviewerPrompt_Fallbacks(t *testing.T) {
-	ctx := V15ReviewerContext{
+func TestBuildReviewerPrompt_Fallbacks(t *testing.T) {
+	ctx := ReviewerContext{
 		PlanContent:      "Test plan",
 		Progress:         "",
 		Learnings:        "",
@@ -698,7 +698,7 @@ func TestBuildV15ReviewerPrompt_Fallbacks(t *testing.T) {
 		DeveloperSummary: "",
 	}
 
-	result, err := BuildV15ReviewerPrompt(ctx)
+	result, err := BuildReviewerPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestBuildV15ReviewerPrompt_Fallbacks(t *testing.T) {
 	if !strings.Contains(result, "No learnings yet.") {
 		t.Error("should show learnings fallback")
 	}
-	if !strings.Contains(result, "No diff available.") {
+	if !strings.Contains(result, "No code changes to review") {
 		t.Error("should show diff fallback")
 	}
 	if !strings.Contains(result, "No developer summary available.") {
@@ -718,15 +718,15 @@ func TestBuildV15ReviewerPrompt_Fallbacks(t *testing.T) {
 	}
 }
 
-func TestBuildV15ReviewerPrompt_ZeroIssuesApproval(t *testing.T) {
-	ctx := V15ReviewerContext{
+func TestBuildReviewerPrompt_ZeroIssuesApproval(t *testing.T) {
+	ctx := ReviewerContext{
 		PlanContent: "Test plan",
 		Progress:    "Complete",
 		Learnings:   "Done",
 		DiffOutput:  "some changes",
 	}
 
-	result, err := BuildV15ReviewerPrompt(ctx)
+	result, err := BuildReviewerPrompt(ctx)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -743,10 +743,10 @@ func TestBuildV15ReviewerPrompt_ZeroIssuesApproval(t *testing.T) {
 	}
 }
 
-func TestV15DeveloperPromptTemplate_IsValid(t *testing.T) {
+func TestDeveloperPromptTemplate_IsValid(t *testing.T) {
 	// Verify the template is not empty and contains required variables
-	if V15DeveloperPromptTemplate == "" {
-		t.Fatal("V15DeveloperPromptTemplate should not be empty")
+	if DeveloperPromptTemplate == "" {
+		t.Fatal("DeveloperPromptTemplate should not be empty")
 	}
 
 	requiredVars := []string{
@@ -757,16 +757,16 @@ func TestV15DeveloperPromptTemplate_IsValid(t *testing.T) {
 	}
 
 	for _, v := range requiredVars {
-		if !strings.Contains(V15DeveloperPromptTemplate, v) {
-			t.Errorf("V15DeveloperPromptTemplate missing required variable: %s", v)
+		if !strings.Contains(DeveloperPromptTemplate, v) {
+			t.Errorf("DeveloperPromptTemplate missing required variable: %s", v)
 		}
 	}
 }
 
-func TestV15ReviewerPromptTemplate_IsValid(t *testing.T) {
+func TestReviewerPromptTemplate_IsValid(t *testing.T) {
 	// Verify the template is not empty and contains required variables
-	if V15ReviewerPromptTemplate == "" {
-		t.Fatal("V15ReviewerPromptTemplate should not be empty")
+	if ReviewerPromptTemplate == "" {
+		t.Fatal("ReviewerPromptTemplate should not be empty")
 	}
 
 	requiredVars := []string{
@@ -778,8 +778,31 @@ func TestV15ReviewerPromptTemplate_IsValid(t *testing.T) {
 	}
 
 	for _, v := range requiredVars {
-		if !strings.Contains(V15ReviewerPromptTemplate, v) {
-			t.Errorf("V15ReviewerPromptTemplate missing required variable: %s", v)
+		if !strings.Contains(ReviewerPromptTemplate, v) {
+			t.Errorf("ReviewerPromptTemplate missing required variable: %s", v)
 		}
+	}
+}
+
+func TestReviewerPromptNoVCSCommands(t *testing.T) {
+	ctx := ReviewerContext{
+		PlanContent: "test plan",
+		DiffOutput:  "test diff",
+	}
+	prompt, err := BuildReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should NOT contain instructions to run jj/git commands
+	if strings.Contains(prompt, "Use `jj diff`") {
+		t.Error("prompt should not instruct to use jj diff")
+	}
+	if strings.Contains(prompt, "Use `git diff`") {
+		t.Error("prompt should not instruct to use git diff")
+	}
+	// But should contain instruction NOT to run VCS commands
+	if !strings.Contains(prompt, "Do NOT run") {
+		t.Error("prompt should instruct reviewer not to run VCS commands")
 	}
 }

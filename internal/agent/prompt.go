@@ -1,4 +1,4 @@
-// Package agent provides prompt construction for the Ralph V2 single-agent loop.
+// Package agent provides prompt construction for Ralph.
 package agent
 
 import (
@@ -18,6 +18,16 @@ const PromptTemplate = `# Instructions
 
 You are an experienced software developer working iteratively on a plan.
 You can wear many hats: developer, reviewer, architect, security engineer.
+
+## Version Control
+
+This project uses Jujutsu (jj) for version control, NOT git. Even if there is a colocated .git directory, you MUST use jj commands instead of git commands:
+- Use ` + "`jj diff`" + ` instead of ` + "`git diff`" + `
+- Use ` + "`jj show`" + ` instead of ` + "`git show`" + `
+- Use ` + "`jj log`" + ` instead of ` + "`git log`" + `
+- Use ` + "`jj status`" + ` instead of ` + "`git status`" + `
+- Use ` + "`jj new`" + ` instead of ` + "`git commit`" + `
+- Use ` + "`jj describe`" + ` to set commit messages
 
 ## Your Capabilities
 - Critically evaluate your own code; don't stop until you're confident it's right
@@ -77,16 +87,16 @@ type PromptContext struct {
 	Learnings   string // Current learnings (empty string if none)
 }
 
-// V15DeveloperContext holds context for V1.5 developer agent prompts.
-type V15DeveloperContext struct {
+// DeveloperContext holds context for developer agent prompts.
+type DeveloperContext struct {
 	PlanContent      string // The full plan text
 	Progress         string // Current progress (empty string if none)
 	Learnings        string // Current learnings (empty string if none)
 	ReviewerFeedback string // Feedback from last review rejection (empty if none)
 }
 
-// V15ReviewerContext holds context for V1.5 reviewer agent prompts.
-type V15ReviewerContext struct {
+// ReviewerContext holds context for reviewer agent prompts.
+type ReviewerContext struct {
 	PlanContent      string // The full plan text
 	Progress         string // Current progress (empty string if none)
 	Learnings        string // Current learnings (empty string if none)
@@ -124,11 +134,21 @@ func BuildPrompt(ctx PromptContext) (string, error) {
 	return buf.String(), nil
 }
 
-// V15DeveloperPromptTemplate is the template for V1.5 developer agent prompts.
-const V15DeveloperPromptTemplate = `# Instructions
+// DeveloperPromptTemplate is the template for developer agent prompts.
+const DeveloperPromptTemplate = `# Instructions
 
 You are an experienced software developer working iteratively on a plan.
 You can wear many hats: developer, reviewer, architect, security engineer.
+
+## Version Control
+
+This project uses Jujutsu (jj) for version control, NOT git. Even if there is a colocated .git directory, you MUST use jj commands instead of git commands:
+- Use ` + "`jj diff`" + ` instead of ` + "`git diff`" + `
+- Use ` + "`jj show`" + ` instead of ` + "`git show`" + `
+- Use ` + "`jj log`" + ` instead of ` + "`git log`" + `
+- Use ` + "`jj status`" + ` instead of ` + "`git status`" + `
+- Use ` + "`jj new`" + ` instead of ` + "`git commit`" + `
+- Use ` + "`jj describe`" + ` to set commit messages
 
 ## Your Capabilities
 - Critically evaluate your own code; don't stop until you're confident it's right
@@ -186,10 +206,19 @@ The reviewer rejected your previous work. You MUST address all the following iss
 {{.ReviewerFeedback}}
 {{end}}`
 
-// V15ReviewerPromptTemplate is the template for V1.5 reviewer agent prompts.
-const V15ReviewerPromptTemplate = `# Instructions
+// ReviewerPromptTemplate is the template for reviewer agent prompts.
+const ReviewerPromptTemplate = `# Instructions
 
 You are a VERY HARD CRITIC code reviewer.
+
+## Important
+
+The diff section below shows the cumulative changes made during this development session. If the diff appears incomplete, incorrect, or you need to understand the context of changes better, you MAY use jj commands to examine the history:
+- ` + "`jj log`" + ` to see the commit history
+- ` + "`jj show <change-id>`" + ` to see the diff for a specific change
+- ` + "`jj diff --from <change-id> --to <change-id>`" + ` to see changes between specific points
+
+If the diff section shows "No code changes to review" then no code was modified and you should approve based on the developer's analysis in the Developer Summary section.
 
 You will ONLY approve code that meets ALL of the following criteria:
 - Zero critical issues (security vulnerabilities, crashes, data loss, race conditions)
@@ -271,16 +300,16 @@ REVIEWER_FEEDBACK: [Summarize what needs to be fixed]
 
 {{if .DiffOutput}}` + "```diff" + `
 {{.DiffOutput}}
-` + "```" + `{{else}}No diff available.{{end}}`
+` + "```" + `{{else}}No code changes to review. The developer completed analysis/investigation without modifying any files. Review the Developer Summary section above to verify the developer's conclusions are sound.{{end}}`
 
-// v15DeveloperTemplate is the pre-parsed V1.5 developer template.
-var v15DeveloperTemplate = template.Must(template.New("v15-developer-prompt").Parse(V15DeveloperPromptTemplate))
+// developerTemplate is the pre-parsed developer template.
+var developerTemplate = template.Must(template.New("developer-prompt").Parse(DeveloperPromptTemplate))
 
-// v15ReviewerTemplate is the pre-parsed V1.5 reviewer template.
-var v15ReviewerTemplate = template.Must(template.New("v15-reviewer-prompt").Parse(V15ReviewerPromptTemplate))
+// reviewerTemplate is the pre-parsed reviewer template.
+var reviewerTemplate = template.Must(template.New("reviewer-prompt").Parse(ReviewerPromptTemplate))
 
-// BuildV15DeveloperPrompt constructs the V1.5 developer agent prompt.
-func BuildV15DeveloperPrompt(ctx V15DeveloperContext) (string, error) {
+// BuildDeveloperPrompt constructs the developer agent prompt.
+func BuildDeveloperPrompt(ctx DeveloperContext) (string, error) {
 	if strings.TrimSpace(ctx.PlanContent) == "" {
 		return "", ErrEmptyPlanContent
 	}
@@ -297,15 +326,15 @@ func BuildV15DeveloperPrompt(ctx V15DeveloperContext) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := v15DeveloperTemplate.Execute(&buf, ctx); err != nil {
-		return "", fmt.Errorf("failed to execute V1.5 developer prompt template: %w", err)
+	if err := developerTemplate.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("failed to execute developer prompt template: %w", err)
 	}
 
 	return buf.String(), nil
 }
 
-// BuildV15ReviewerPrompt constructs the V1.5 reviewer agent prompt.
-func BuildV15ReviewerPrompt(ctx V15ReviewerContext) (string, error) {
+// BuildReviewerPrompt constructs the reviewer agent prompt.
+func BuildReviewerPrompt(ctx ReviewerContext) (string, error) {
 	if strings.TrimSpace(ctx.PlanContent) == "" {
 		return "", ErrEmptyPlanContent
 	}
@@ -325,8 +354,8 @@ func BuildV15ReviewerPrompt(ctx V15ReviewerContext) (string, error) {
 	}
 
 	var buf bytes.Buffer
-	if err := v15ReviewerTemplate.Execute(&buf, ctx); err != nil {
-		return "", fmt.Errorf("failed to execute V1.5 reviewer prompt template: %w", err)
+	if err := reviewerTemplate.Execute(&buf, ctx); err != nil {
+		return "", fmt.Errorf("failed to execute reviewer prompt template: %w", err)
 	}
 
 	return buf.String(), nil

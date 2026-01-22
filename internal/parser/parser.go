@@ -10,7 +10,7 @@ import (
 // DoneMarker is the exact string that indicates the agent is done.
 const DoneMarker = "DONE DONE DONE!!!"
 
-// V1.5 markers for dual-agent loop.
+// Markers for the dual-agent loop.
 const (
 	DevDoneMarker          = "DEV_DONE DEV_DONE DEV_DONE!!!"
 	ReviewerApprovedMarker = "REVIEWER_APPROVED REVIEWER_APPROVED!!!"
@@ -26,8 +26,8 @@ type ParseResult struct {
 	Raw       string // Original output
 }
 
-// V15ParseResult holds the result of parsing V1.5 agent output.
-type V15ParseResult struct {
+// AgentParseResult holds the result of parsing agent output.
+type AgentParseResult struct {
 	Progress  string // Extracted progress content
 	Learnings string // Extracted learnings content
 	Raw       string // Original output
@@ -215,10 +215,10 @@ func containsMarker(s, marker string) bool {
 	return true
 }
 
-// ParseV15Output parses output from a V1.5 developer or reviewer agent.
+// ParseAgentOutput parses output from a developer or reviewer agent.
 // The agentType should be "developer" or "reviewer".
-func ParseV15Output(output, agentType string) *V15ParseResult {
-	result := &V15ParseResult{
+func ParseAgentOutput(output, agentType string) *AgentParseResult {
+	result := &AgentParseResult{
 		Raw: output,
 	}
 
@@ -234,7 +234,7 @@ func ParseV15Output(output, agentType string) *V15ParseResult {
 	trimmed := strings.TrimSpace(output)
 	if !foundProgress && !foundLearnings {
 		if trimmed != "" {
-			log.Warn("malformed V1.5 agent output: no sections found, treating as progress",
+			log.Warn("malformed agent output: no sections found, treating as progress",
 				"agent_type", agentType, "output_length", len(output))
 			result.Progress = trimmed
 		}

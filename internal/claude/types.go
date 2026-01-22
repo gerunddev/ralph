@@ -71,6 +71,42 @@ type Usage struct {
 	CacheCreate  int `json:"cache_creation_input_tokens"`
 }
 
+// ContextLimitPercent is the threshold at which to stop a session.
+const ContextLimitPercent = 50.0
+
+// DefaultContextWindow is the fallback context window size if model is unknown.
+const DefaultContextWindow = 200000
+
+// modelContextEntry represents a model prefix and its context window size.
+type modelContextEntry struct {
+	prefix      string
+	contextSize int
+}
+
+// modelContextWindows defines model prefixes and their context window sizes.
+// Since no prefix is a substring of another, iteration order doesn't affect matching.
+// All current Claude models have 200K context windows.
+var modelContextWindows = []modelContextEntry{
+	{"claude-3-5-sonnet", 200000},
+	{"claude-3-sonnet", 200000},
+	{"claude-3-haiku", 200000},
+	{"claude-3-opus", 200000},
+	{"claude-sonnet-4", 200000},
+	{"claude-haiku-4", 200000},
+	{"claude-opus-4", 200000},
+}
+
+// GetContextWindowForModel returns the context window size for a given model name.
+// It matches model name prefixes and returns DefaultContextWindow if unknown.
+func GetContextWindowForModel(model string) int {
+	for _, entry := range modelContextWindows {
+		if len(model) >= len(entry.prefix) && model[:len(entry.prefix)] == entry.prefix {
+			return entry.contextSize
+		}
+	}
+	return DefaultContextWindow
+}
+
 // ToolUseContent contains information about a tool being called.
 type ToolUseContent struct {
 	ID    string          `json:"id"`

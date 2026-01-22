@@ -770,6 +770,204 @@ func TestWrapError_GenericError(t *testing.T) {
 }
 
 // =============================================================================
+// Unit Tests - Diff
+// =============================================================================
+
+func TestDiff(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("diff output", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	output, err := client.Diff(context.Background(), "abc123", "@")
+	if err != nil {
+		t.Fatalf("Diff() error = %v", err)
+	}
+
+	if output != "diff output" {
+		t.Errorf("Diff() output = %q, want %q", output, "diff output")
+	}
+
+	// Verify command was called correctly
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	if call.name != "jj" {
+		t.Errorf("command name = %q, want 'jj'", call.name)
+	}
+	expectedArgs := []string{"diff", "--from", "abc123", "--to", "@"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("command args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestDiff_NoFrom(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("diff output", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.Diff(context.Background(), "", "@")
+	if err != nil {
+		t.Fatalf("Diff() error = %v", err)
+	}
+
+	// Verify --from was not included
+	call := mock.calls[0]
+	expectedArgs := []string{"diff", "--to", "@"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("command args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestDiff_NoTo(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("diff output", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.Diff(context.Background(), "abc123", "")
+	if err != nil {
+		t.Fatalf("Diff() error = %v", err)
+	}
+
+	// Verify --to was not included
+	call := mock.calls[0]
+	expectedArgs := []string{"diff", "--from", "abc123"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("command args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestDiff_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "error message", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.Diff(context.Background(), "abc123", "@")
+	if err == nil {
+		t.Fatal("Diff() should return error")
+	}
+}
+
+// =============================================================================
+// Unit Tests - GetCurrentChangeID
+// =============================================================================
+
+func TestGetCurrentChangeID(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("abc123def456\n", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	changeID, err := client.GetCurrentChangeID(context.Background())
+	if err != nil {
+		t.Fatalf("GetCurrentChangeID() error = %v", err)
+	}
+
+	if changeID != "abc123def456" {
+		t.Errorf("GetCurrentChangeID() = %q, want %q", changeID, "abc123def456")
+	}
+
+	// Verify command was called correctly
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	if call.name != "jj" {
+		t.Errorf("command name = %q, want 'jj'", call.name)
+	}
+	expectedArgs := []string{"log", "-r", "@", "-T", "change_id", "--no-graph"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("command args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestGetCurrentChangeID_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "error message", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.GetCurrentChangeID(context.Background())
+	if err == nil {
+		t.Fatal("GetCurrentChangeID() should return error")
+	}
+}
+
+// =============================================================================
+// Unit Tests - GetParentChangeID
+// =============================================================================
+
+func TestGetParentChangeID(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("parent123def456\n", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	changeID, err := client.GetParentChangeID(context.Background())
+	if err != nil {
+		t.Fatalf("GetParentChangeID() error = %v", err)
+	}
+
+	if changeID != "parent123def456" {
+		t.Errorf("GetParentChangeID() = %q, want %q", changeID, "parent123def456")
+	}
+
+	// Verify command was called correctly
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	expectedArgs := []string{"log", "-r", "@-", "-T", "change_id", "--no-graph"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("GetParentChangeID() args = %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestGetParentChangeID_RootCommit(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: cannot resolve @- root", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	changeID, err := client.GetParentChangeID(context.Background())
+	if err != nil {
+		t.Fatalf("GetParentChangeID() should not return error for root commit, got: %v", err)
+	}
+
+	if changeID != "" {
+		t.Errorf("GetParentChangeID() = %q, want empty string for root commit", changeID)
+	}
+}
+
+func TestGetParentChangeID_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "some other error", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.GetParentChangeID(context.Background())
+	if err == nil {
+		t.Fatal("GetParentChangeID() should return error for non-root errors")
+	}
+}
+
+// =============================================================================
 // Integration Tests
 // =============================================================================
 

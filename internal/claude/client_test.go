@@ -341,6 +341,52 @@ func TestSession_DoneChannel(t *testing.T) {
 }
 
 // =============================================================================
+// Context Window Tests
+// =============================================================================
+
+func TestGetContextWindowForModel(t *testing.T) {
+	tests := []struct {
+		model    string
+		expected int
+	}{
+		// Exact prefix matches
+		{"claude-opus-4-20241101", 200000},
+		{"claude-sonnet-4-20241101", 200000},
+		{"claude-3-5-sonnet-20240620", 200000},
+		{"claude-3-opus-20240229", 200000},
+		{"claude-3-sonnet-20240229", 200000},
+		{"claude-3-haiku-20240307", 200000},
+		{"claude-haiku-4-20241101", 200000},
+
+		// Short model names (prefix only)
+		{"claude-opus-4", 200000},
+		{"claude-sonnet-4", 200000},
+		{"claude-3-opus", 200000},
+
+		// Unknown models should return default
+		{"unknown-model", DefaultContextWindow},
+		{"gpt-4", DefaultContextWindow},
+		{"", DefaultContextWindow},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			result := GetContextWindowForModel(tt.model)
+			if result != tt.expected {
+				t.Errorf("GetContextWindowForModel(%q) = %d, want %d", tt.model, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestContextLimitPercent(t *testing.T) {
+	// Verify the constant is set to 50%
+	if ContextLimitPercent != 50.0 {
+		t.Errorf("ContextLimitPercent = %f, want 50.0", ContextLimitPercent)
+	}
+}
+
+// =============================================================================
 // Integration Tests
 // =============================================================================
 

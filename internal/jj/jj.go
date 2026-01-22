@@ -189,3 +189,40 @@ func (c *Client) IsEmpty(ctx context.Context) (bool, error) {
 	}
 	return strings.TrimSpace(output) == "", nil
 }
+
+// Diff returns the diff between two revisions.
+// If from is empty, it diffs from the parent of 'to'.
+// If to is empty, it defaults to "@" (current change).
+func (c *Client) Diff(ctx context.Context, from, to string) (string, error) {
+	args := []string{"diff"}
+	if from != "" {
+		args = append(args, "--from", from)
+	}
+	if to != "" {
+		args = append(args, "--to", to)
+	}
+	return c.runCommand(ctx, args...)
+}
+
+// GetCurrentChangeID returns the change ID of the current revision (@).
+func (c *Client) GetCurrentChangeID(ctx context.Context) (string, error) {
+	output, err := c.runCommand(ctx, "log", "-r", "@", "-T", "change_id", "--no-graph")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(output), nil
+}
+
+// GetParentChangeID returns the change ID of the parent of the current revision (@-).
+// Returns empty string if there is no parent (root commit).
+func (c *Client) GetParentChangeID(ctx context.Context) (string, error) {
+	output, err := c.runCommand(ctx, "log", "-r", "@-", "-T", "change_id", "--no-graph")
+	if err != nil {
+		// Check if it's a root commit error (no parent)
+		if strings.Contains(err.Error(), "root") || strings.Contains(err.Error(), "empty") {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(output), nil
+}

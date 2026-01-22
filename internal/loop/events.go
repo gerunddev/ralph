@@ -1,4 +1,4 @@
-// Package loop provides the main execution loop for Ralph V2.
+// Package loop provides the main execution loop for Ralph.
 package loop
 
 import "github.com/gerund/ralph/internal/claude"
@@ -38,7 +38,6 @@ const (
 	// EventError is emitted when an error occurs.
 	EventError EventType = "error"
 
-	// V1.5 Events
 	// EventDeveloperStart is emitted when the developer agent starts.
 	EventDeveloperStart EventType = "developer_start"
 	// EventDeveloperEnd is emitted when the developer agent ends.
@@ -55,6 +54,8 @@ const (
 	EventReviewerFeedback EventType = "reviewer_feedback"
 	// EventBothDone is emitted when both developer and reviewer signal done.
 	EventBothDone EventType = "both_done"
+	// EventContextLimit is emitted when the context window usage exceeds the limit.
+	EventContextLimit EventType = "context_limit"
 )
 
 // Event represents an event emitted by the loop.

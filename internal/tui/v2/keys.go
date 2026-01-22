@@ -1,4 +1,4 @@
-// Package tui provides the Bubble Tea TUI for Ralph V2 single-agent loop.
+// Package tui provides the Bubble Tea TUI for Ralph.
 package tui
 
 import "github.com/charmbracelet/bubbles/key"

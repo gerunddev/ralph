@@ -1,4 +1,4 @@
-// Package loop provides the main execution loop for Ralph V2.
+// Package loop provides the main execution loop for Ralph.
 package loop
 
 import (
@@ -18,6 +18,29 @@ import (
 	"github.com/gerund/ralph/internal/log"
 	"github.com/gerund/ralph/internal/parser"
 )
+
+// maxDiffBytes is the maximum size of diff to include in reviewer prompt.
+// Large diffs can exhaust the context window before the reviewer even starts.
+// 100KB is ~25k tokens, leaving plenty of room for the prompt and response.
+const maxDiffBytes = 100 * 1024
+
+// truncateDiff limits diff size to prevent context window exhaustion.
+// Returns the original diff if under limit, otherwise truncates with a message.
+func truncateDiff(diff string) string {
+	if len(diff) <= maxDiffBytes {
+		return diff
+	}
+
+	truncated := diff[:maxDiffBytes]
+	// Try to truncate at a line boundary for cleaner output
+	if lastNewline := strings.LastIndex(truncated, "\n"); lastNewline > maxDiffBytes/2 {
+		truncated = truncated[:lastNewline]
+	}
+
+	return truncated + "\n\n... [DIFF TRUNCATED - " +
+		fmt.Sprintf("%d", len(diff)-len(truncated)) +
+		" bytes omitted. Review may be incomplete for large changes.]"
+}
 
 // editToolNames contains tool names that indicate file modifications.
 var editToolNames = map[string]bool{
@@ -48,7 +71,6 @@ type Config struct {
 	MaxIterations   int
 	WorkDir         string // For jj operations
 	EventBufferSize int    // Size of event channel buffer (default: 1000)
-	UseV15          bool   // Use V1.5 dual-agent loop (developer + reviewer)
 }
 
 // Deps holds dependencies for the loop.
@@ -59,7 +81,7 @@ type Deps struct {
 	JJ        *jj.Client
 }
 
-// Loop orchestrates the main execution loop for Ralph V2.
+// Loop orchestrates the main execution loop for Ralph.
 type Loop struct {
 	cfg  Config
 	deps Deps
@@ -70,7 +92,8 @@ type Loop struct {
 	iteration   int
 
 	// For tracking state
-	plan *db.Plan
+	plan         *db.Plan
+	baseChangeID string // jj change ID at the start of the loop, used for reviewer diffs
 }
 
 // New creates a new Loop with the given configuration and dependencies.
@@ -127,6 +150,31 @@ func (l *Loop) Run(ctx context.Context) error {
 		log.Warn("failed to update plan status", "error", err)
 	}
 
+	// Load or capture base change ID for reviewer diffs.
+	// On first run, we capture @- (parent of current working copy) and persist it.
+	// On resume, we use the persisted value so cumulative diffs include all changes since plan start.
+	if plan.BaseChangeID != "" {
+		// Resume case: use the persisted base change ID
+		l.baseChangeID = plan.BaseChangeID
+		log.Debug("using persisted base change ID for reviewer diffs", "changeID", plan.BaseChangeID)
+	} else {
+		// First run: capture and persist the parent change ID
+		baseChangeID, err := l.deps.JJ.GetParentChangeID(ctx)
+		if err != nil {
+			log.Warn("failed to get parent change ID", "error", err)
+		} else if baseChangeID != "" {
+			l.baseChangeID = baseChangeID
+			// Persist so we have it on resume
+			if err := l.deps.DB.UpdatePlanBaseChangeID(l.cfg.PlanID, baseChangeID); err != nil {
+				log.Warn("failed to persist base change ID", "error", err)
+			} else {
+				log.Debug("captured and persisted parent change ID for reviewer diffs", "changeID", baseChangeID)
+			}
+		} else {
+			log.Debug("no parent change ID (root commit), will use jj show fallback")
+		}
+	}
+
 	// Emit started event
 	l.emit(NewEvent(EventStarted, l.iteration, l.cfg.MaxIterations, "Loop started"))
 
@@ -152,14 +200,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			return nil
 		}
 
-		// Run one iteration (choose loop version based on config)
-		var done bool
-		var err error
-		if l.cfg.UseV15 {
-			done, err = l.runV15Iteration(ctx)
-		} else {
-			done, err = l.runIteration(ctx)
-		}
+		// Run one iteration
+		done, err := l.runIteration(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
@@ -181,218 +223,20 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
-// runIteration runs a single iteration of the loop.
-// Returns (done, error) where done indicates the agent said "DONE DONE DONE!!!".
-func (l *Loop) runIteration(ctx context.Context) (bool, error) {
-	l.emit(NewEvent(EventIterationStart, l.iteration, l.cfg.MaxIterations,
-		fmt.Sprintf("Starting iteration %d", l.iteration)))
-
-	// 1. Load latest progress and learnings
-	progress, err := l.deps.DB.GetLatestProgress(l.cfg.PlanID)
-	if err != nil {
-		return false, fmt.Errorf("failed to get latest progress: %w", err)
-	}
-
-	learnings, err := l.deps.DB.GetLatestLearnings(l.cfg.PlanID)
-	if err != nil {
-		return false, fmt.Errorf("failed to get latest learnings: %w", err)
-	}
-
-	// 2. Build prompt
-	var progressContent, learningsContent string
-	if progress != nil {
-		progressContent = progress.Content
-	}
-	if learnings != nil {
-		learningsContent = learnings.Content
-	}
-
-	prompt, err := agent.BuildPrompt(agent.PromptContext{
-		PlanContent: l.plan.Content,
-		Progress:    progressContent,
-		Learnings:   learningsContent,
-	})
-	if err != nil {
-		return false, fmt.Errorf("failed to build prompt: %w", err)
-	}
-
-	// Emit prompt built event with full prompt content
-	l.emit(NewPromptBuiltEvent(l.iteration, l.cfg.MaxIterations, prompt))
-
-	// 3. Run jj new only if current change has content
-	isEmpty, err := l.deps.JJ.IsEmpty(ctx)
-	if err != nil {
-		log.Warn("failed to check if change is empty", "error", err)
-		// Assume not empty on error - safer to create new change
-		isEmpty = false
-	}
-
-	if !isEmpty {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.cfg.MaxIterations, "Creating new jj change"))
-		if err := l.deps.JJ.New(ctx); err != nil {
-			// Log but continue - jj errors shouldn't stop the loop
-			log.Warn("jj new failed", "error", err)
-			l.emit(NewErrorEvent(l.iteration, l.cfg.MaxIterations,
-				fmt.Errorf("jj new failed: %w", err)))
-		}
-	} else {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.cfg.MaxIterations, "Skipping jj new (current change is empty)"))
-	}
-
-	// 4. Create session in DB
-	sessionID := uuid.New().String()
-	session := &db.PlanSession{
-		ID:          sessionID,
-		PlanID:      l.cfg.PlanID,
-		Iteration:   l.iteration,
-		InputPrompt: prompt,
-		Status:      db.PlanSessionRunning,
-	}
-	if err := l.deps.DB.CreatePlanSession(session); err != nil {
-		return false, fmt.Errorf("failed to create session: %w", err)
-	}
-
-	// 5. Run Claude session
-	l.emit(NewEvent(EventClaudeStart, l.iteration, l.cfg.MaxIterations, "Starting Claude session"))
-
-	claudeSession, err := l.deps.Claude.Run(ctx, prompt)
-	if err != nil {
-		// Mark session as failed
-		if dbErr := l.deps.DB.CompletePlanSession(sessionID, db.PlanSessionFailed, ""); dbErr != nil {
-			log.Warn("failed to mark session as failed", "error", dbErr)
-		}
-		return false, fmt.Errorf("failed to start Claude: %w", err)
-	}
-
-	// Stream events and collect output
-	var outputBuilder strings.Builder
-	var sessionHasEdits bool
-	sequence := 0
-	for claudeEvent := range claudeSession.Events() {
-		// Track if any edit tools are used
-		if claudeEvent.Type == claude.EventToolUse && claudeEvent.ToolUse != nil {
-			if isEditTool(claudeEvent.ToolUse.Name) {
-				sessionHasEdits = true
-			}
-		}
-		// Emit to our event channel
-		eventCopy := claudeEvent
-		l.emit(NewClaudeStreamEvent(l.iteration, l.cfg.MaxIterations, &eventCopy))
-
-		// Store event in DB
-		dbEvent := &db.Event{
-			SessionID: sessionID,
-			Sequence:  sequence,
-			EventType: string(claudeEvent.Type),
-			RawJSON:   string(claudeEvent.Raw),
-		}
-		if err := l.deps.DB.CreateEvent(dbEvent); err != nil {
-			log.Warn("failed to store event", "error", err)
-		}
-		sequence++
-
-		// Collect text from assistant text streaming events and message events
-		if claudeEvent.Type == claude.EventAssistantText && claudeEvent.AssistantText != nil {
-			outputBuilder.WriteString(claudeEvent.AssistantText.Text)
-		} else if claudeEvent.Type == claude.EventMessage && claudeEvent.Message != nil {
-			// Also collect from complete message events (fallback if streaming not available)
-			outputBuilder.WriteString(claudeEvent.Message.Text)
-		}
-	}
-
-	// Wait for Claude to complete
-	if err := claudeSession.Wait(); err != nil {
-		log.Warn("Claude session error", "error", err)
-		// Don't fail the iteration - we might still have useful output
-	}
-
-	// Get final output
-	finalOutput := outputBuilder.String()
-
-	// Emit final collected output for display
-	l.emit(NewClaudeOutputEvent(l.iteration, l.cfg.MaxIterations, finalOutput))
-
-	l.emit(NewEvent(EventClaudeEnd, l.iteration, l.cfg.MaxIterations, "Claude session ended"))
-
-	// 6. Parse output
-	l.emit(NewEvent(EventParsed, l.iteration, l.cfg.MaxIterations, "Parsing output"))
-	parseResult := parser.Parse(finalOutput)
-
-	// 7. Handle completion or store progress/learnings
-	if parseResult.IsDone {
-		if sessionHasEdits {
-			// DONE marker rejected because session contained file edits.
-			// The agent should have done a review-only pass before saying DONE.
-			log.Info("ignoring DONE marker because session contained file edits",
-				"iteration", l.iteration)
-			l.emit(NewEvent(EventParsed, l.iteration, l.cfg.MaxIterations,
-				"DONE ignored - session had edits, will continue iteration"))
-
-			// Sanitize the DONE marker from parsed sections before saving
-			parseResult.Progress = sanitizeDoneMarker(parseResult.Progress)
-			parseResult.Learnings = sanitizeDoneMarker(parseResult.Learnings)
-			parseResult.Status = sanitizeDoneMarker(parseResult.Status)
-			parseResult.IsDone = false // Reset so logic falls through correctly
-			// Fall through to store sanitized progress/learnings and continue
-		} else {
-			// Accept DONE - this was a true review-only session
-			// Mark session complete with output
-			if err := l.deps.DB.CompletePlanSession(sessionID, db.PlanSessionCompleted, finalOutput); err != nil {
-				log.Warn("failed to complete session", "error", err)
-			}
-
-			// Distill and commit
-			l.distillAndCommit(ctx, sessionID, finalOutput)
-
-			return true, nil // Done!
-		}
-	}
-
-	// Store progress if present
-	if parseResult.Progress != "" {
-		progressRecord := &db.Progress{
-			PlanID:    l.cfg.PlanID,
-			SessionID: sessionID,
-			Content:   parseResult.Progress,
-		}
-		if err := l.deps.DB.CreateProgress(progressRecord); err != nil {
-			log.Warn("failed to store progress", "error", err)
-		}
-	}
-
-	// Store learnings if present
-	if parseResult.Learnings != "" {
-		learningsRecord := &db.Learnings{
-			PlanID:    l.cfg.PlanID,
-			SessionID: sessionID,
-			Content:   parseResult.Learnings,
-		}
-		if err := l.deps.DB.CreateLearnings(learningsRecord); err != nil {
-			log.Warn("failed to store learnings", "error", err)
-		}
-	}
-
-	// 8. Mark session complete before distillation (so session is recorded even if distill hangs)
-	if err := l.deps.DB.CompletePlanSession(sessionID, db.PlanSessionCompleted, finalOutput); err != nil {
-		log.Warn("failed to complete session", "error", err)
-	}
-
-	// 9. Distill commit message and commit
-	l.distillAndCommit(ctx, sessionID, finalOutput)
-
-	l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
-		fmt.Sprintf("Completed iteration %d", l.iteration)))
-
-	return false, nil
-}
-
 // distillAndCommit distills a commit message and runs jj commit.
+// If there are no changes to commit, this is a no-op.
 func (l *Loop) distillAndCommit(ctx context.Context, sessionID, output string) {
 	// Get the diff for context
 	diff, err := l.deps.JJ.Show(ctx)
 	if err != nil {
 		log.Warn("failed to get diff for distillation", "error", err)
 		diff = "" // Continue without diff
+	}
+
+	// Skip commit if there are no changes
+	if strings.TrimSpace(diff) == "" {
+		log.Debug("no changes to commit, skipping distillAndCommit")
+		return
 	}
 
 	l.emit(NewEvent(EventDistilling, l.iteration, l.cfg.MaxIterations, "Distilling commit message"))
@@ -426,18 +270,14 @@ func (l *Loop) emit(event Event) {
 	}
 }
 
-// =============================================================================
-// V1.5 Dual-Agent Loop
-// =============================================================================
-
-// runV15Iteration runs a single V1.5 iteration with developer and optional reviewer.
+// runIteration runs a single iteration with developer and reviewer.
 // Returns (done, error) where done indicates both developer and reviewer approved.
-func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
+func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	l.emit(NewEvent(EventIterationStart, l.iteration, l.cfg.MaxIterations,
-		fmt.Sprintf("Starting V1.5 iteration %d", l.iteration)))
+		fmt.Sprintf("Starting iteration %d", l.iteration)))
 
 	// 1. Load state
-	progress, learnings, feedback, err := l.loadV15State()
+	progress, learnings, feedback, err := l.loadState()
 	if err != nil {
 		return false, err
 	}
@@ -445,7 +285,7 @@ func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
 	// 2. Run developer agent
 	l.emit(NewEvent(EventDeveloperStart, l.iteration, l.cfg.MaxIterations, "Starting developer agent"))
 
-	devOutput, devHadEdits, devSessionID, err := l.runV15Developer(ctx, progress, learnings, feedback)
+	devOutput, devHadEdits, devSessionID, err := l.runDeveloper(ctx, progress, learnings, feedback)
 	if err != nil {
 		return false, fmt.Errorf("developer agent failed: %w", err)
 	}
@@ -453,10 +293,10 @@ func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
 	l.emit(NewEvent(EventDeveloperEnd, l.iteration, l.cfg.MaxIterations, "Developer agent ended"))
 
 	// 3. Parse developer output
-	devResult := parser.ParseV15Output(devOutput, "developer")
+	devResult := parser.ParseAgentOutput(devOutput, "developer")
 
 	// 4. Store developer progress/learnings
-	l.storeV15ProgressLearnings(devSessionID, devResult.Progress, devResult.Learnings)
+	l.storeProgressLearnings(devSessionID, devResult.Progress, devResult.Learnings)
 
 	// 5. Clear any previous reviewer feedback (developer has now seen and addressed it)
 	if feedback != "" {
@@ -482,17 +322,57 @@ func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
 	l.emit(NewEvent(EventDeveloperDone, l.iteration, l.cfg.MaxIterations,
 		"Developer signaled DEV_DONE, triggering reviewer"))
 
-	// 7. Get diff for reviewer
-	diff, err := l.deps.JJ.Show(ctx)
-	if err != nil {
-		log.Warn("failed to get diff for reviewer", "error", err)
-		diff = ""
+	// 7. Get diff for reviewer - use cumulative diff from base change, not just current change
+	var diff string
+	if l.baseChangeID != "" {
+		log.Debug("getting cumulative diff for reviewer", "baseChangeID", l.baseChangeID)
+		diff, err = l.deps.JJ.Diff(ctx, l.baseChangeID, "@")
+		if err != nil {
+			log.Warn("failed to get cumulative diff for reviewer", "error", err)
+			diff = ""
+		} else if strings.TrimSpace(diff) == "" {
+			log.Warn("cumulative diff is empty despite having baseChangeID",
+				"baseChangeID", l.baseChangeID,
+				"hint", "changes may have been squashed, rebased, or committed before loop started")
+			// Set a note for the reviewer about this edge case
+			diff = "[Note: Cumulative diff from base change " + l.baseChangeID +
+				" is empty. This may occur if changes were squashed/rebased, or if all work " +
+				"was committed before the loop captured the base change. Review the Developer " +
+				"Summary section for context on what was accomplished.]"
+		} else {
+			log.Debug("got cumulative diff for reviewer", "diffLen", len(diff), "diffPreview", truncateString(diff, 200))
+		}
+	} else {
+		// Fallback to jj show if we don't have a base change ID.
+		// This happens when starting from a root commit (no parent to diff against).
+		// LIMITATION: This only shows the current change's diff, not cumulative work
+		// across multiple changes. If developer created multiple changes before DEV_DONE,
+		// earlier changes will not be included in this review.
+		log.Warn("no baseChangeID available, falling back to jj show (single change only)",
+			"limitation", "review will only include current change, not cumulative session work")
+		diff, err = l.deps.JJ.Show(ctx)
+		if err != nil {
+			log.Warn("failed to get diff for reviewer", "error", err)
+			diff = ""
+		} else if strings.TrimSpace(diff) != "" {
+			// Prepend a note about the limitation
+			diff = "[Note: This diff shows only the current jj change. If work spanned " +
+				"multiple changes, earlier changes are not included in this review.]\n\n" + diff
+		}
+	}
+
+	// Truncate large diffs to prevent context window exhaustion
+	if len(diff) > maxDiffBytes {
+		log.Warn("diff exceeds size limit, truncating",
+			"originalSize", len(diff),
+			"maxSize", maxDiffBytes)
+		diff = truncateDiff(diff)
 	}
 
 	// 8. Run reviewer agent
 	l.emit(NewEvent(EventReviewerStart, l.iteration, l.cfg.MaxIterations, "Starting reviewer agent"))
 
-	reviewOutput, reviewSessionID, err := l.runV15Reviewer(ctx, progress, learnings, diff, devOutput)
+	reviewOutput, reviewSessionID, err := l.runReviewer(ctx, progress, learnings, diff, devOutput)
 	if err != nil {
 		return false, fmt.Errorf("reviewer agent failed: %w", err)
 	}
@@ -500,10 +380,10 @@ func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
 	l.emit(NewEvent(EventReviewerEnd, l.iteration, l.cfg.MaxIterations, "Reviewer agent ended"))
 
 	// 9. Parse reviewer output
-	reviewResult := parser.ParseV15Output(reviewOutput, "reviewer")
+	reviewResult := parser.ParseAgentOutput(reviewOutput, "reviewer")
 
 	// 10. Store reviewer progress/learnings
-	l.storeV15ProgressLearnings(reviewSessionID, reviewResult.Progress, reviewResult.Learnings)
+	l.storeProgressLearnings(reviewSessionID, reviewResult.Progress, reviewResult.Learnings)
 
 	// 11. Check reviewer verdict
 	if reviewResult.ReviewerApproved {
@@ -532,13 +412,13 @@ func (l *Loop) runV15Iteration(ctx context.Context) (bool, error) {
 	l.distillAndCommit(ctx, reviewSessionID, reviewOutput)
 
 	l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
-		fmt.Sprintf("V1.5 iteration %d complete with reviewer feedback", l.iteration)))
+		fmt.Sprintf("iteration %d complete with reviewer feedback", l.iteration)))
 
 	return false, nil
 }
 
-// loadV15State loads progress, learnings, and last reviewer feedback.
-func (l *Loop) loadV15State() (progress, learnings, feedback string, err error) {
+// loadState loads progress, learnings, and reviewer feedback.
+func (l *Loop) loadState() (progress, learnings, feedback string, err error) {
 	progressRecord, err := l.deps.DB.GetLatestProgress(l.cfg.PlanID)
 	if err != nil {
 		return "", "", "", fmt.Errorf("failed to get latest progress: %w", err)
@@ -566,10 +446,10 @@ func (l *Loop) loadV15State() (progress, learnings, feedback string, err error) 
 	return progress, learnings, feedback, nil
 }
 
-// runV15Developer runs the developer agent and returns output, whether edits occurred, and session ID.
-func (l *Loop) runV15Developer(ctx context.Context, progress, learnings, feedback string) (output string, hadEdits bool, sessionID string, err error) {
+// runDeveloper runs the developer agent and returns output, whether edits occurred, and session ID.
+func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback string) (output string, hadEdits bool, sessionID string, err error) {
 	// Build developer prompt
-	prompt, err := agent.BuildV15DeveloperPrompt(agent.V15DeveloperContext{
+	prompt, err := agent.BuildDeveloperPrompt(agent.DeveloperContext{
 		PlanContent:      l.plan.Content,
 		Progress:         progress,
 		Learnings:        learnings,
@@ -593,6 +473,8 @@ func (l *Loop) runV15Developer(ctx context.Context, progress, learnings, feedbac
 		if err := l.deps.JJ.New(ctx); err != nil {
 			log.Warn("jj new failed", "error", err)
 		}
+	} else {
+		l.emit(NewEvent(EventJJNew, l.iteration, l.cfg.MaxIterations, "Skipping jj new (current change is empty)"))
 	}
 
 	// Create session in DB
@@ -603,7 +485,7 @@ func (l *Loop) runV15Developer(ctx context.Context, progress, learnings, feedbac
 		Iteration:   l.iteration,
 		InputPrompt: prompt,
 		Status:      db.PlanSessionRunning,
-		AgentType:   db.V15AgentDeveloper,
+		AgentType:   db.LoopAgentDeveloper,
 	}
 	if err := l.deps.DB.CreatePlanSession(session); err != nil {
 		return "", false, "", fmt.Errorf("failed to create developer session: %w", err)
@@ -618,10 +500,10 @@ func (l *Loop) runV15Developer(ctx context.Context, progress, learnings, feedbac
 	return output, hadEdits, sessionID, nil
 }
 
-// runV15Reviewer runs the reviewer agent and returns output and session ID.
-func (l *Loop) runV15Reviewer(ctx context.Context, progress, learnings, diff, devSummary string) (output string, sessionID string, err error) {
+// runReviewer runs the reviewer agent and returns output and session ID.
+func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSummary string) (output string, sessionID string, err error) {
 	// Build reviewer prompt
-	prompt, err := agent.BuildV15ReviewerPrompt(agent.V15ReviewerContext{
+	prompt, err := agent.BuildReviewerPrompt(agent.ReviewerContext{
 		PlanContent:      l.plan.Content,
 		Progress:         progress,
 		Learnings:        learnings,
@@ -642,7 +524,7 @@ func (l *Loop) runV15Reviewer(ctx context.Context, progress, learnings, diff, de
 		Iteration:   l.iteration,
 		InputPrompt: prompt,
 		Status:      db.PlanSessionRunning,
-		AgentType:   db.V15AgentReviewer,
+		AgentType:   db.LoopAgentReviewer,
 	}
 	if err := l.deps.DB.CreatePlanSession(session); err != nil {
 		return "", "", fmt.Errorf("failed to create reviewer session: %w", err)
@@ -672,7 +554,36 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 	// Stream events and collect output
 	var outputBuilder strings.Builder
 	sequence := 0
+
+	// Context window tracking
+	maxContext := claude.DefaultContextWindow
+	contextLimitReached := false
+
 	for claudeEvent := range claudeSession.Events() {
+		// Get max context from init event
+		if claudeEvent.Type == claude.EventInit && claudeEvent.Init != nil {
+			maxContext = claude.GetContextWindowForModel(claudeEvent.Init.Model)
+			log.Debug("context window determined", "model", claudeEvent.Init.Model, "maxContext", maxContext)
+		}
+
+		// Track token usage from message events and check context limit
+		if !contextLimitReached && claudeEvent.Type == claude.EventMessage && claudeEvent.Message != nil {
+			totalTokens := claudeEvent.Message.Usage.InputTokens + claudeEvent.Message.Usage.OutputTokens
+			percentage := float64(totalTokens) / float64(maxContext) * 100.0
+
+			if percentage >= claude.ContextLimitPercent {
+				contextLimitReached = true
+				log.Info("context limit reached, stopping session",
+					"percentage", fmt.Sprintf("%.1f%%", percentage),
+					"totalTokens", totalTokens,
+					"maxContext", maxContext)
+				l.emit(NewEvent(EventContextLimit, l.iteration, l.cfg.MaxIterations,
+					fmt.Sprintf("Context limit reached: %.1f%% (%d/%d tokens)", percentage, totalTokens, maxContext)))
+				claudeSession.Cancel()
+				// Continue to drain remaining events from the channel
+			}
+		}
+
 		// Track if any edit tools are used
 		if claudeEvent.Type == claude.EventToolUse && claudeEvent.ToolUse != nil {
 			if isEditTool(claudeEvent.ToolUse.Name) {
@@ -720,8 +631,8 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 	return output, hadEdits, nil
 }
 
-// storeV15ProgressLearnings stores progress and learnings from a V1.5 agent session.
-func (l *Loop) storeV15ProgressLearnings(sessionID, progress, learnings string) {
+// storeProgressLearnings stores progress and learnings from an agent session.
+func (l *Loop) storeProgressLearnings(sessionID, progress, learnings string) {
 	if progress != "" {
 		// Sanitize any done markers
 		progress = sanitizeDevDoneMarker(sanitizeDoneMarker(progress))
