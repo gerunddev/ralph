@@ -546,6 +546,26 @@ func TestHeader_View_VariousWidths(t *testing.T) {
 	}
 }
 
+func TestHeader_View_WithPlanID(t *testing.T) {
+	h := NewHeader()
+	h.SetIteration(3, 20)
+	h.SetStatus("Running")
+	h.SetWidth(100)
+	h.SetPlanID("abc12345-6789-0def-ghij-klmnopqrstuv")
+
+	view := h.View()
+
+	// Plan ID should be truncated to first 8 chars
+	if !strings.Contains(view, "abc12345") {
+		t.Errorf("expected truncated plan ID 'abc12345' in view, got: %s", view)
+	}
+
+	// Full UUID should not be present
+	if strings.Contains(view, "abc12345-6789") {
+		t.Error("expected plan ID to be truncated, but found more than 8 chars")
+	}
+}
+
 func TestScrollablePanel_Content(t *testing.T) {
 	p := NewScrollablePanel("Test", false)
 	p.SetSize(80, 20)
