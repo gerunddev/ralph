@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/gerund/ralph/internal/log"
+	"github.com/gerunddev/ralph/internal/log"
 )
 
 // ErrNotFound is returned when a requested record is not found.

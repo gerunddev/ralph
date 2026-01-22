@@ -1,7 +1,7 @@
 // Package db provides database connectivity and operations for Ralph.
 package db
 
-import "github.com/gerund/ralph/internal/log"
+import "github.com/gerunddev/ralph/internal/log"
 
 // schema is the SQL schema for the Ralph database.
 const schema = `

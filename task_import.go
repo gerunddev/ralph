@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gerund/ralph/internal/config"
-	"github.com/gerund/ralph/internal/db"
-	"github.com/gerund/ralph/internal/log"
+	"github.com/gerunddev/ralph/internal/config"
+	"github.com/gerunddev/ralph/internal/db"
+	"github.com/gerunddev/ralph/internal/log"
 	"github.com/spf13/cobra"
 )
 

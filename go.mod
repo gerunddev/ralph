@@ -1,4 +1,4 @@
-module github.com/gerund/ralph
+module github.com/gerunddev/ralph
 
 go 1.22
 

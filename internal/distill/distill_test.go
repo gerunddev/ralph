@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gerund/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/claude"
 )
 
 // =============================================================================

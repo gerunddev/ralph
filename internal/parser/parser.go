@@ -4,7 +4,7 @@ package parser
 import (
 	"strings"
 
-	"github.com/gerund/ralph/internal/log"
+	"github.com/gerunddev/ralph/internal/log"
 )
 
 // DoneMarker is the exact string that indicates the agent is done.

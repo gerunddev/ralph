@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/gerund/ralph/internal/claude"
-	"github.com/gerund/ralph/internal/loop"
+	"github.com/gerunddev/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/loop"
 )
 
 // Helper to update and cast the model

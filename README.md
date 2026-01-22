@@ -19,13 +19,13 @@ Ralph is an iterative AI development tool that runs Claude Code in automated loo
 ## Installation
 
 ```bash
-go install github.com/gerund/ralph/cmd/ralph@latest
+go install github.com/gerunddev/ralph/cmd/ralph@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/gerund/ralph
+git clone https://github.com/gerunddev/ralph
 cd ralph
 go build -o ralph ./cmd/ralph
 ```

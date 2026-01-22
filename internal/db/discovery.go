@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/gerund/ralph/internal/log"
+	"github.com/gerunddev/ralph/internal/log"
 )
 
 // ProjectInfo contains basic information about a discovered project.

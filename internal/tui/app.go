@@ -11,9 +11,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/gerund/ralph/internal/claude"
-	"github.com/gerund/ralph/internal/loop"
-	"github.com/gerund/ralph/internal/parser"
+	"github.com/gerunddev/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/loop"
+	"github.com/gerunddev/ralph/internal/parser"
 )
 
 // Model is the main Bubble Tea model for the Ralph TUI.

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gerund/ralph/internal/claude"
-	"github.com/gerund/ralph/internal/db"
-	"github.com/gerund/ralph/internal/distill"
-	"github.com/gerund/ralph/internal/jj"
+	"github.com/gerunddev/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/db"
+	"github.com/gerunddev/ralph/internal/distill"
+	"github.com/gerunddev/ralph/internal/jj"
 )
 
 func TestNew(t *testing.T) {

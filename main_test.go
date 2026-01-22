@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gerund/ralph/internal/app"
-	"github.com/gerund/ralph/internal/db"
-	"github.com/gerund/ralph/internal/jj"
+	"github.com/gerunddev/ralph/internal/app"
+	"github.com/gerunddev/ralph/internal/db"
+	"github.com/gerunddev/ralph/internal/jj"
 	"github.com/spf13/cobra"
 )
 

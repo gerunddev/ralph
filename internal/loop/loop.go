@@ -10,13 +10,13 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/gerund/ralph/internal/agent"
-	"github.com/gerund/ralph/internal/claude"
-	"github.com/gerund/ralph/internal/db"
-	"github.com/gerund/ralph/internal/distill"
-	"github.com/gerund/ralph/internal/jj"
-	"github.com/gerund/ralph/internal/log"
-	"github.com/gerund/ralph/internal/parser"
+	"github.com/gerunddev/ralph/internal/agent"
+	"github.com/gerunddev/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/db"
+	"github.com/gerunddev/ralph/internal/distill"
+	"github.com/gerunddev/ralph/internal/jj"
+	"github.com/gerunddev/ralph/internal/log"
+	"github.com/gerunddev/ralph/internal/parser"
 )
 
 // maxDiffBytes is the maximum size of diff to include in reviewer prompt.

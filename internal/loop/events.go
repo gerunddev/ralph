@@ -1,7 +1,7 @@
 // Package loop provides the main execution loop for Ralph.
 package loop
 
-import "github.com/gerund/ralph/internal/claude"
+import "github.com/gerunddev/ralph/internal/claude"
 
 // EventType represents the type of a loop event.
 type EventType string

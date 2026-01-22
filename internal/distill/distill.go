@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gerund/ralph/internal/claude"
+	"github.com/gerunddev/ralph/internal/claude"
 )
 
 // DefaultModel is the default model to use for distillation.
