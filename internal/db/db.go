@@ -34,8 +34,11 @@ func New(path string) (*DB, error) {
 		}
 	}
 
-	// Open database with foreign keys enabled
-	conn, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)")
+	// Open database with pragmas for concurrency and reliability:
+	// - foreign_keys: enforce referential integrity
+	// - journal_mode=WAL: Write-Ahead Logging for better concurrent read/write
+	// - busy_timeout=5000: wait up to 5 seconds for locks instead of failing immediately
+	conn, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

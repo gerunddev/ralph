@@ -62,7 +62,8 @@ func DiscoverProjects(projectsDir string) ([]ProjectInfo, error) {
 // getProjectInfo opens a database briefly to retrieve basic project info.
 func getProjectInfo(dbPath, dirName string) (ProjectInfo, error) {
 	// Open database directly without auto-migrate (read-only query)
-	conn, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)")
+	// Use busy_timeout to handle concurrent access gracefully
+	conn, err := sql.Open("sqlite", dbPath+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)")
 	if err != nil {
 		return ProjectInfo{}, err
 	}
