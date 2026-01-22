@@ -767,12 +767,15 @@ func (d *DB) CreatePlanSession(session *PlanSession) error {
 	if session.Status == "" {
 		session.Status = PlanSessionRunning
 	}
+	if session.AgentType == "" {
+		session.AgentType = V15AgentDeveloper
+	}
 
 	_, err := d.conn.Exec(`
-		INSERT INTO plan_sessions (id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		INSERT INTO plan_sessions (id, plan_id, iteration, input_prompt, final_output, status, agent_type, created_at, completed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.PlanID, session.Iteration, session.InputPrompt,
-		session.FinalOutput, session.Status, session.CreatedAt, session.CompletedAt,
+		session.FinalOutput, session.Status, session.AgentType, session.CreatedAt, session.CompletedAt,
 	)
 	return err
 }
@@ -781,11 +784,11 @@ func (d *DB) CreatePlanSession(session *PlanSession) error {
 func (d *DB) GetPlanSession(id string) (*PlanSession, error) {
 	session := &PlanSession{}
 	err := d.conn.QueryRow(`
-		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, agent_type, created_at, completed_at
 		FROM plan_sessions WHERE id = ?`, id,
 	).Scan(
 		&session.ID, &session.PlanID, &session.Iteration, &session.InputPrompt,
-		&session.FinalOutput, &session.Status, &session.CreatedAt, &session.CompletedAt,
+		&session.FinalOutput, &session.Status, &session.AgentType, &session.CreatedAt, &session.CompletedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -819,7 +822,7 @@ func (d *DB) CompletePlanSession(id string, status PlanSessionStatus, finalOutpu
 // GetPlanSessionsByPlan returns all sessions for a plan ordered by iteration.
 func (d *DB) GetPlanSessionsByPlan(planID string) ([]*PlanSession, error) {
 	rows, err := d.conn.Query(`
-		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, agent_type, created_at, completed_at
 		FROM plan_sessions WHERE plan_id = ? ORDER BY iteration`, planID)
 	if err != nil {
 		return nil, err
@@ -835,7 +838,7 @@ func (d *DB) GetPlanSessionsByPlan(planID string) ([]*PlanSession, error) {
 		s := &PlanSession{}
 		if err := rows.Scan(
 			&s.ID, &s.PlanID, &s.Iteration, &s.InputPrompt,
-			&s.FinalOutput, &s.Status, &s.CreatedAt, &s.CompletedAt,
+			&s.FinalOutput, &s.Status, &s.AgentType, &s.CreatedAt, &s.CompletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -848,11 +851,11 @@ func (d *DB) GetPlanSessionsByPlan(planID string) ([]*PlanSession, error) {
 func (d *DB) GetLatestPlanSession(planID string) (*PlanSession, error) {
 	session := &PlanSession{}
 	err := d.conn.QueryRow(`
-		SELECT id, plan_id, iteration, input_prompt, final_output, status, created_at, completed_at
+		SELECT id, plan_id, iteration, input_prompt, final_output, status, agent_type, created_at, completed_at
 		FROM plan_sessions WHERE plan_id = ? ORDER BY iteration DESC LIMIT 1`, planID,
 	).Scan(
 		&session.ID, &session.PlanID, &session.Iteration, &session.InputPrompt,
-		&session.FinalOutput, &session.Status, &session.CreatedAt, &session.CompletedAt,
+		&session.FinalOutput, &session.Status, &session.AgentType, &session.CreatedAt, &session.CompletedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil // Return nil, not error, when no records exist
@@ -1056,4 +1059,54 @@ func (d *DB) GetLearningsHistory(planID string) ([]*Learnings, error) {
 		learningsList = append(learningsList, l)
 	}
 	return learningsList, rows.Err()
+}
+
+// =============================================================================
+// V1.5 Reviewer Feedback Methods
+// =============================================================================
+
+// CreateReviewerFeedback inserts a new reviewer feedback record into the database.
+func (d *DB) CreateReviewerFeedback(feedback *ReviewerFeedback) error {
+	feedback.CreatedAt = time.Now()
+
+	result, err := d.conn.Exec(`
+		INSERT INTO reviewer_feedback (plan_id, session_id, content, created_at)
+		VALUES (?, ?, ?, ?)`,
+		feedback.PlanID, feedback.SessionID, feedback.Content, feedback.CreatedAt,
+	)
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	feedback.ID = id
+	return nil
+}
+
+// GetLatestReviewerFeedback returns the most recent reviewer feedback for a plan.
+func (d *DB) GetLatestReviewerFeedback(planID string) (*ReviewerFeedback, error) {
+	feedback := &ReviewerFeedback{}
+	err := d.conn.QueryRow(`
+		SELECT id, plan_id, session_id, content, created_at
+		FROM reviewer_feedback WHERE plan_id = ? ORDER BY created_at DESC LIMIT 1`, planID,
+	).Scan(
+		&feedback.ID, &feedback.PlanID, &feedback.SessionID,
+		&feedback.Content, &feedback.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil // Return nil, not error, when no records exist
+	}
+	if err != nil {
+		return nil, err
+	}
+	return feedback, nil
+}
+
+// ClearReviewerFeedback removes all reviewer feedback for a plan (used after developer addresses it).
+func (d *DB) ClearReviewerFeedback(planID string) error {
+	_, err := d.conn.Exec(`DELETE FROM reviewer_feedback WHERE plan_id = ?`, planID)
+	return err
 }

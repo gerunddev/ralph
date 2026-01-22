@@ -593,6 +593,98 @@ func TestLog_WithTemplate(t *testing.T) {
 }
 
 // =============================================================================
+// Unit Tests - IsEmpty
+// =============================================================================
+
+func TestIsEmpty_Empty(t *testing.T) {
+	mock := newMockRunner()
+	// jj diff returns empty output when there are no changes
+	mock.addResponse("", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	isEmpty, err := client.IsEmpty(context.Background())
+	if err != nil {
+		t.Fatalf("IsEmpty() returned error: %v", err)
+	}
+	if !isEmpty {
+		t.Error("IsEmpty() = false, want true for empty diff")
+	}
+
+	// Verify the call
+	if len(mock.calls) != 1 {
+		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
+	}
+
+	call := mock.calls[0]
+	expectedArgs := []string{"diff"}
+	if !slices.Equal(call.args, expectedArgs) {
+		t.Errorf("IsEmpty() called with args %v, want %v", call.args, expectedArgs)
+	}
+}
+
+func TestIsEmpty_NotEmpty(t *testing.T) {
+	mock := newMockRunner()
+	// jj diff returns actual diff content when there are changes
+	mock.addResponse("diff --git a/file.go b/file.go\n--- a/file.go\n+++ b/file.go\n@@ -1,3 +1,10 @@\n+new line", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	isEmpty, err := client.IsEmpty(context.Background())
+	if err != nil {
+		t.Fatalf("IsEmpty() returned error: %v", err)
+	}
+	if isEmpty {
+		t.Error("IsEmpty() = true, want false for non-empty diff")
+	}
+}
+
+func TestIsEmpty_WhitespaceOnly(t *testing.T) {
+	mock := newMockRunner()
+	// jj diff might return whitespace only (edge case)
+	mock.addResponse("   \n\t  ", "", nil)
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	isEmpty, err := client.IsEmpty(context.Background())
+	if err != nil {
+		t.Fatalf("IsEmpty() returned error: %v", err)
+	}
+	if !isEmpty {
+		t.Error("IsEmpty() = false, want true for whitespace-only output")
+	}
+}
+
+func TestIsEmpty_Error(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: failed", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.IsEmpty(context.Background())
+	if err == nil {
+		t.Fatal("IsEmpty() should return error")
+	}
+}
+
+func TestIsEmpty_NotRepo(t *testing.T) {
+	mock := newMockRunner()
+	mock.addResponse("", "Error: There is no jj repo in \"/test\"", errors.New("exit status 1"))
+
+	client := NewClient("/test/dir")
+	client.SetCommandRunner(mock.run)
+
+	_, err := client.IsEmpty(context.Background())
+	if !errors.Is(err, ErrNotRepo) {
+		t.Errorf("IsEmpty() error = %v, want ErrNotRepo", err)
+	}
+}
+
+// =============================================================================
 // Unit Tests - Error Handling
 // =============================================================================
 

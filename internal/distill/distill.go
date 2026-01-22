@@ -15,19 +15,22 @@ import (
 const DefaultModel = "haiku"
 
 // FallbackMessage is returned when distillation fails or produces no output.
-const FallbackMessage = "Update implementation"
+const FallbackMessage = "wip: work in progress"
 
 // distillationPrompt is the prompt template for commit message generation.
-const distillationPrompt = `You are a commit message writer. Given the following development session output, write a concise git commit message.
+const distillationPrompt = `You are a commit message writer. Given the following development session and code diff, write a concise git commit message.
 
 Rules:
-- Use conventional commit format if appropriate (feat:, fix:, refactor:, etc.)
+- Use conventional commit format (feat:, fix:, refactor:, chore:, docs:, test:)
 - Keep the first line under 72 characters
-- Be specific about what changed
+- Be specific about what changed based on the DIFF, not the session output
+- Focus on the "what" and "why", not the "how"
 - Do not mention AI, Claude, automation, or robots
-- Write as if a human developer made these changes
 
-Session output:
+Session context:
+%s
+
+Code diff:
 %s
 
 Respond with only the commit message, nothing else.`
@@ -55,14 +58,14 @@ func NewDistillerWithDefaults() *Distiller {
 	return NewDistiller(client)
 }
 
-// Distill takes session output and returns a concise commit message.
+// Distill takes session output and diff, returns a concise commit message.
 // It handles special cases:
 // - Empty output returns a generic message
 // - "DONE DONE DONE!!!" returns "Complete implementation"
 // - Errors return a fallback message
-func (d *Distiller) Distill(ctx context.Context, sessionOutput string) (string, error) {
-	// Handle empty output
-	if strings.TrimSpace(sessionOutput) == "" {
+func (d *Distiller) Distill(ctx context.Context, sessionOutput string, diff string) (string, error) {
+	// Handle empty output and empty diff
+	if strings.TrimSpace(sessionOutput) == "" && strings.TrimSpace(diff) == "" {
 		return FallbackMessage, nil
 	}
 
@@ -72,7 +75,7 @@ func (d *Distiller) Distill(ctx context.Context, sessionOutput string) (string, 
 	}
 
 	// Build the prompt
-	prompt := fmt.Sprintf(distillationPrompt, sessionOutput)
+	prompt := fmt.Sprintf(distillationPrompt, sessionOutput, diff)
 
 	// Run Claude session
 	session, err := d.client.Run(ctx, prompt)

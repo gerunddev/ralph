@@ -150,6 +150,14 @@ const (
 	PlanSessionFailed    PlanSessionStatus = "failed"
 )
 
+// V15AgentType represents the type of agent in a V1.5 loop session.
+type V15AgentType string
+
+const (
+	V15AgentDeveloper V15AgentType = "developer"
+	V15AgentReviewer  V15AgentType = "reviewer"
+)
+
 // Plan represents a V2 plan (simplified from V1 project).
 type Plan struct {
 	ID         string
@@ -168,6 +176,7 @@ type PlanSession struct {
 	InputPrompt string
 	FinalOutput string
 	Status      PlanSessionStatus
+	AgentType   V15AgentType // V1.5: "developer" or "reviewer", empty for V2
 	CreatedAt   time.Time
 	CompletedAt *time.Time
 }
@@ -196,6 +205,15 @@ type Learnings struct {
 	ID        int64
 	PlanID    string
 	SessionID string
+	Content   string
+	CreatedAt time.Time
+}
+
+// ReviewerFeedback represents feedback from a V1.5 reviewer rejection.
+type ReviewerFeedback struct {
+	ID        int64
+	PlanID    string
+	SessionID string // The reviewer session that generated the feedback
 	Content   string
 	CreatedAt time.Time
 }

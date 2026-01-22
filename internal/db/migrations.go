@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS plan_sessions (
     input_prompt TEXT NOT NULL,
     final_output TEXT,
     status TEXT NOT NULL DEFAULT 'running',
+    agent_type TEXT NOT NULL DEFAULT 'developer',
     created_at DATETIME NOT NULL,
     completed_at DATETIME,
     FOREIGN KEY (plan_id) REFERENCES plans(id)
@@ -129,11 +130,23 @@ CREATE TABLE IF NOT EXISTS learnings (
     FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
 );
 
+-- V1.5 Schema: Reviewer feedback storage
+CREATE TABLE IF NOT EXISTS reviewer_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at DATETIME NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES plans(id),
+    FOREIGN KEY (session_id) REFERENCES plan_sessions(id)
+);
+
 -- V2 Indexes
 CREATE INDEX IF NOT EXISTS idx_plan_sessions_plan ON plan_sessions(plan_id);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_progress_plan ON progress(plan_id);
 CREATE INDEX IF NOT EXISTS idx_learnings_plan ON learnings(plan_id);
+CREATE INDEX IF NOT EXISTS idx_reviewer_feedback_plan ON reviewer_feedback(plan_id);
 `
 
 // Migrate runs all database migrations to ensure the schema is up to date.
@@ -166,6 +179,17 @@ func (d *DB) runMigrations() error {
 	} else if !exists {
 		if _, err := d.conn.Exec(`
 			ALTER TABLE projects ADD COLUMN learnings_state TEXT NOT NULL DEFAULT '';
+		`); err != nil {
+			return err
+		}
+	}
+
+	// Migration: Add agent_type column to plan_sessions table
+	if exists, err := d.columnExists("plan_sessions", "agent_type"); err != nil {
+		return err
+	} else if !exists {
+		if _, err := d.conn.Exec(`
+			ALTER TABLE plan_sessions ADD COLUMN agent_type TEXT NOT NULL DEFAULT 'developer';
 		`); err != nil {
 			return err
 		}

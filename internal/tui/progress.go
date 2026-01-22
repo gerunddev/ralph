@@ -353,7 +353,7 @@ func (m *TaskProgressModel) handleImplEvent(event engine.ImplLoopEvent) {
 // View implements tea.Model.
 func (m TaskProgressModel) View() string {
 	if m.err != nil && !m.completed {
-		return fmt.Sprintf("Error: %v\n\nPress q to quit", m.err)
+		return fmt.Sprintf("Error: %v (q to quit)", m.err)
 	}
 
 	var s strings.Builder
@@ -386,7 +386,20 @@ func (m TaskProgressModel) renderHeader() string {
 		progress = fmt.Sprintf(" [%d/%d tasks]", completed, len(m.tasks))
 	}
 
-	return lipgloss.JoinHorizontal(lipgloss.Top, title, progress)
+	left := lipgloss.JoinHorizontal(lipgloss.Top, title, progress)
+
+	// Key hints on the right
+	hints := helpStyle.Render("j/k: scroll | q: quit")
+
+	// Calculate spacing
+	leftWidth := lipgloss.Width(left)
+	hintsWidth := lipgloss.Width(hints)
+	spacing := m.width - leftWidth - hintsWidth - 2
+	if spacing < 1 {
+		spacing = 1
+	}
+
+	return left + strings.Repeat(" ", spacing) + hints
 }
 
 // renderBody renders the main body with task list and output.
@@ -469,11 +482,11 @@ func (m TaskProgressModel) renderFooter() string {
 		left = modeIndicator + "Starting..."
 	}
 
-	// Help text varies based on pause mode
+	// Help text varies based on pause mode (quit/scroll hints are in header)
 	if m.pauseMode {
-		right = "p: continuous | Enter: continue | j/k: scroll | q: quit"
+		right = "p: continuous | Enter: continue | g/G: top/bottom"
 	} else {
-		right = "p: pause mode | j/k: scroll | g/G: top/bottom | q: quit"
+		right = "p: pause mode | g/G: top/bottom"
 	}
 
 	// Calculate spacing using display width for proper Unicode handling

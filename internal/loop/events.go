@@ -37,6 +37,24 @@ const (
 	EventMaxIterations EventType = "max_iterations"
 	// EventError is emitted when an error occurs.
 	EventError EventType = "error"
+
+	// V1.5 Events
+	// EventDeveloperStart is emitted when the developer agent starts.
+	EventDeveloperStart EventType = "developer_start"
+	// EventDeveloperEnd is emitted when the developer agent ends.
+	EventDeveloperEnd EventType = "developer_end"
+	// EventDeveloperDone is emitted when the developer signals DEV_DONE.
+	EventDeveloperDone EventType = "developer_done"
+	// EventReviewerStart is emitted when the reviewer agent starts.
+	EventReviewerStart EventType = "reviewer_start"
+	// EventReviewerEnd is emitted when the reviewer agent ends.
+	EventReviewerEnd EventType = "reviewer_end"
+	// EventReviewerApproved is emitted when the reviewer approves.
+	EventReviewerApproved EventType = "reviewer_approved"
+	// EventReviewerFeedback is emitted when the reviewer provides feedback (rejection).
+	EventReviewerFeedback EventType = "reviewer_feedback"
+	// EventBothDone is emitted when both developer and reviewer signal done.
+	EventBothDone EventType = "both_done"
 )
 
 // Event represents an event emitted by the loop.

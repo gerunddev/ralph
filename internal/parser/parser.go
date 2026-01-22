@@ -10,6 +10,13 @@ import (
 // DoneMarker is the exact string that indicates the agent is done.
 const DoneMarker = "DONE DONE DONE!!!"
 
+// V1.5 markers for dual-agent loop.
+const (
+	DevDoneMarker          = "DEV_DONE DEV_DONE DEV_DONE!!!"
+	ReviewerApprovedMarker = "REVIEWER_APPROVED REVIEWER_APPROVED!!!"
+	ReviewerFeedbackPrefix = "REVIEWER_FEEDBACK:"
+)
+
 // ParseResult holds the result of parsing agent output.
 type ParseResult struct {
 	IsDone    bool   // True if the agent indicated completion
@@ -17,6 +24,20 @@ type ParseResult struct {
 	Learnings string // Extracted learnings content (empty if not found)
 	Status    string // Extracted status content (empty if not found)
 	Raw       string // Original output
+}
+
+// V15ParseResult holds the result of parsing V1.5 agent output.
+type V15ParseResult struct {
+	Progress  string // Extracted progress content
+	Learnings string // Extracted learnings content
+	Raw       string // Original output
+
+	// Developer-specific
+	DevDone bool // True if developer signaled DEV_DONE
+
+	// Reviewer-specific
+	ReviewerApproved bool   // True if reviewer approved
+	ReviewerFeedback string // Feedback text if not approved
 }
 
 // Parse parses agent output to determine completion state or extract progress/learnings.
@@ -179,4 +200,117 @@ func containsDoneMarker(s string) bool {
 		return false
 	}
 	return true
+}
+
+// containsMarker checks if input contains a marker, ensuring it's not followed by extra '!'.
+func containsMarker(s, marker string) bool {
+	idx := strings.Index(s, marker)
+	if idx == -1 {
+		return false
+	}
+	afterIdx := idx + len(marker)
+	if afterIdx < len(s) && s[afterIdx] == '!' {
+		return false
+	}
+	return true
+}
+
+// ParseV15Output parses output from a V1.5 developer or reviewer agent.
+// The agentType should be "developer" or "reviewer".
+func ParseV15Output(output, agentType string) *V15ParseResult {
+	result := &V15ParseResult{
+		Raw: output,
+	}
+
+	// Extract common sections
+	progress, foundProgress := extractSection(output, "## Progress")
+	learnings, foundLearnings := extractSection(output, "## Learnings")
+	status, _ := extractSection(output, "## Status")
+
+	result.Progress = progress
+	result.Learnings = learnings
+
+	// If no recognized sections found, treat entire output as progress (malformed case)
+	trimmed := strings.TrimSpace(output)
+	if !foundProgress && !foundLearnings {
+		if trimmed != "" {
+			log.Warn("malformed V1.5 agent output: no sections found, treating as progress",
+				"agent_type", agentType, "output_length", len(output))
+			result.Progress = trimmed
+		}
+	}
+
+	switch agentType {
+	case "developer":
+		// Check for developer done marker in status section first, then anywhere
+		if status != "" && containsMarker(status, DevDoneMarker) {
+			result.DevDone = true
+		} else if containsMarker(trimmed, DevDoneMarker) {
+			result.DevDone = true
+		}
+
+	case "reviewer":
+		// Check for reviewer approved marker in status/verdict section
+		verdict, _ := extractSection(output, "### Verdict")
+		if verdict != "" && containsMarker(verdict, ReviewerApprovedMarker) {
+			result.ReviewerApproved = true
+		} else if status != "" && containsMarker(status, ReviewerApprovedMarker) {
+			result.ReviewerApproved = true
+		} else if containsMarker(trimmed, ReviewerApprovedMarker) {
+			result.ReviewerApproved = true
+		}
+
+		// Extract reviewer feedback if not approved
+		if !result.ReviewerApproved {
+			result.ReviewerFeedback = extractReviewerFeedback(output)
+		}
+	}
+
+	return result
+}
+
+// extractReviewerFeedback extracts feedback from reviewer output.
+// Looks for REVIEWER_FEEDBACK: prefix or extracts issue sections.
+func extractReviewerFeedback(output string) string {
+	// Check for explicit REVIEWER_FEEDBACK: prefix
+	idx := strings.Index(output, ReviewerFeedbackPrefix)
+	if idx != -1 {
+		feedbackStart := idx + len(ReviewerFeedbackPrefix)
+		// Extract until end of line or next section
+		remaining := output[feedbackStart:]
+		if newlineIdx := strings.Index(remaining, "\n##"); newlineIdx != -1 {
+			return strings.TrimSpace(remaining[:newlineIdx])
+		}
+		return strings.TrimSpace(remaining)
+	}
+
+	// Otherwise, collect issue sections as feedback
+	var feedback strings.Builder
+
+	criticalIssues, foundCritical := extractSection(output, "### Critical Issues")
+	majorIssues, foundMajor := extractSection(output, "### Major Issues")
+	minorIssues, foundMinor := extractSection(output, "### Minor Issues")
+
+	if foundCritical && criticalIssues != "" && strings.ToLower(criticalIssues) != "none" {
+		feedback.WriteString("Critical Issues:\n")
+		feedback.WriteString(criticalIssues)
+		feedback.WriteString("\n\n")
+	}
+	if foundMajor && majorIssues != "" && strings.ToLower(majorIssues) != "none" {
+		feedback.WriteString("Major Issues:\n")
+		feedback.WriteString(majorIssues)
+		feedback.WriteString("\n\n")
+	}
+	if foundMinor && minorIssues != "" && strings.ToLower(minorIssues) != "none" {
+		feedback.WriteString("Minor Issues:\n")
+		feedback.WriteString(minorIssues)
+		feedback.WriteString("\n\n")
+	}
+
+	if feedback.Len() > 0 {
+		return strings.TrimSpace(feedback.String())
+	}
+
+	// Fallback: use entire output as feedback if no structured sections found
+	return strings.TrimSpace(output)
 }

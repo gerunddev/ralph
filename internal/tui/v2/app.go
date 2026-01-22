@@ -166,7 +166,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.completed = true
 			m.status = "Completed"
 			m.header.SetStatus("Completed")
-			m.feedPanel.AppendLine("\n--- Execution finished ---")
+			finishMsg := sectionDividerStyle.Render("─── Execution finished ───")
+			m.feedPanel.AppendLine(fmt.Sprintf("\n%s", finishMsg))
 		}
 		return m, nil
 
@@ -176,9 +177,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.header.SetIteration(msg.Current, msg.Max)
 
 	case SetPromptMsg:
-		m.feedPanel.AppendLine("\n--- Prompt ---")
+		promptHeader := sectionDividerStyle.Render("─── Prompt ───")
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", promptHeader))
 		m.feedPanel.AppendContent(msg.Prompt)
-		m.feedPanel.AppendLine("\n--- Output ---")
+		outputHeader := sectionDividerStyle.Render("─── Output ───")
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", outputHeader))
 
 	case AppendOutputMsg:
 		m.feedPanel.AppendContent(msg.Text)
@@ -189,7 +192,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case SetErrorMsg:
 		m.err = fmt.Errorf("%s", msg.Error)
-		m.feedPanel.AppendLine(fmt.Sprintf("ERROR: %s", msg.Error))
+		errorMsg := errorStyle.Render(fmt.Sprintf("✗ ERROR: %s", msg.Error))
+		m.feedPanel.AppendLine(errorMsg)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -238,15 +242,18 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		m.streamedBytes = 0 // Reset streaming tracker for new iteration
 		m.status = "Running"
 		m.header.SetStatus("Running")
-		m.feedPanel.AppendLine(fmt.Sprintf("\n=== Iteration %d/%d ===", event.Iteration, event.MaxIter))
+		iterMarker := iterationMarkerStyle.Render(fmt.Sprintf("━━━ Iteration %d/%d ━━━", event.Iteration, event.MaxIter))
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", iterMarker))
 
 	case loop.EventJJNew:
-		m.feedPanel.AppendLine("Creating new jj change...")
+		m.feedPanel.AppendLine(systemMessageStyle.Render("Creating new jj change..."))
 
 	case loop.EventPromptBuilt:
-		m.feedPanel.AppendLine("\n--- Prompt ---")
+		promptHeader := sectionDividerStyle.Render("─── Prompt ───")
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", promptHeader))
 		m.feedPanel.AppendContent(event.Prompt)
-		m.feedPanel.AppendLine("\n--- Output ---")
+		outputHeader := sectionDividerStyle.Render("─── Output ───")
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", outputHeader))
 
 	case loop.EventClaudeStart:
 		// No-op
@@ -276,19 +283,21 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		// No-op
 
 	case loop.EventDistilling:
-		m.feedPanel.AppendLine("Distilling commit message...")
+		m.feedPanel.AppendLine(systemMessageStyle.Render("Distilling commit message..."))
 
 	case loop.EventJJCommit:
-		m.feedPanel.AppendLine(fmt.Sprintf("Committing: %s", event.Message))
+		commitMsg := systemMessageStyle.Render(fmt.Sprintf("Committing: %s", event.Message))
+		m.feedPanel.AppendLine(commitMsg)
 
 	case loop.EventIterationEnd:
-		m.feedPanel.AppendLine("Iteration complete")
+		m.feedPanel.AppendLine(systemMessageStyle.Render("Iteration complete"))
 
 	case loop.EventDone:
 		m.completed = true
 		m.status = "Completed"
 		m.header.SetStatus("Completed")
-		m.feedPanel.AppendLine("\n*** DONE DONE DONE!!! ***")
+		doneMsg := doneMarkerStyle.Render("✓ DONE DONE DONE!!!")
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", doneMsg))
 		// Show completion floating window with summary
 		m.showCompletionWindow()
 
@@ -296,10 +305,12 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		m.completed = true
 		m.status = "Max Iterations"
 		m.header.SetStatus("Max Iterations")
-		m.feedPanel.AppendLine(fmt.Sprintf("\n--- %s ---", event.Message))
+		maxIterMsg := statusFailedStyle.Render(fmt.Sprintf("⚠ %s", event.Message))
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", maxIterMsg))
 
 	case loop.EventError:
-		m.feedPanel.AppendLine(fmt.Sprintf("ERROR: %s", event.Message))
+		errorMsg := errorStyle.Render(fmt.Sprintf("✗ ERROR: %s", event.Message))
+		m.feedPanel.AppendLine(errorMsg)
 	}
 }
 
@@ -338,24 +349,31 @@ func (m *Model) handleClaudeEvent(event *claude.StreamEvent) {
 		}
 
 	case claude.EventError:
-		// Always show errors
+		// Always show errors with styled formatting
 		if event.Error != nil {
-			m.feedPanel.AppendLine(fmt.Sprintf("\nERROR [%s]: %s", event.Error.Code, event.Error.Message))
+			errorMsg := errorStyle.Render(fmt.Sprintf("✗ [%s]: %s", event.Error.Code, event.Error.Message))
+			m.feedPanel.AppendLine(fmt.Sprintf("\n%s", errorMsg))
 		}
 	}
 }
 
-// formatToolUse formats a tool use event for display.
+// formatToolUse formats a tool use event for display with styled output.
 func formatToolUse(tool *claude.ToolUseContent) string {
 	if tool == nil {
 		return ""
 	}
 	// Extract first string param value for context
 	param := extractMainParam(tool.Input)
+
+	// Build styled tool call: ▶ ToolName param
+	icon := toolBracketStyle.Render("▶")
+	name := toolNameStyle.Render(tool.Name)
+
 	if param != "" {
-		return fmt.Sprintf("\n[%s] %s", tool.Name, param)
+		styledParam := toolParamStyle.Render(param)
+		return fmt.Sprintf("\n%s %s %s", icon, name, styledParam)
 	}
-	return fmt.Sprintf("\n[%s]", tool.Name)
+	return fmt.Sprintf("\n%s %s", icon, name)
 }
 
 // extractMainParam extracts the first meaningful string param from tool input JSON.
@@ -519,9 +537,11 @@ func (m *Model) SetEvents(events <-chan loop.Event) {
 
 // SetPrompt sets the prompt content.
 func (m *Model) SetPrompt(prompt string) {
-	m.feedPanel.AppendLine("\n--- Prompt ---")
+	promptHeader := sectionDividerStyle.Render("─── Prompt ───")
+	m.feedPanel.AppendLine(fmt.Sprintf("\n%s", promptHeader))
 	m.feedPanel.AppendContent(prompt)
-	m.feedPanel.AppendLine("\n--- Output ---")
+	outputHeader := sectionDividerStyle.Render("─── Output ───")
+	m.feedPanel.AppendLine(fmt.Sprintf("\n%s", outputHeader))
 }
 
 // IsCompleted returns whether the execution has completed.

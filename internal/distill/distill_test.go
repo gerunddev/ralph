@@ -50,25 +50,26 @@ func TestDistill_EmptyOutput(t *testing.T) {
 	d := newMockedDistiller("")
 
 	tests := []struct {
-		name  string
-		input string
+		name   string
+		output string
+		diff   string
 	}{
-		{"empty string", ""},
-		{"whitespace only", "   "},
-		{"newlines only", "\n\n"},
-		{"tabs and spaces", "\t  \n  \t"},
+		{"empty string and empty diff", "", ""},
+		{"whitespace only", "   ", "   "},
+		{"newlines only", "\n\n", "\n\n"},
+		{"tabs and spaces", "\t  \n  \t", "\t  \n  \t"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			msg, err := d.Distill(ctx, tt.input)
+			msg, err := d.Distill(ctx, tt.output, tt.diff)
 
 			if err != nil {
 				t.Errorf("Distill() returned error: %v", err)
 			}
 			if msg != FallbackMessage {
-				t.Errorf("Distill(%q) = %q, want %q", tt.input, msg, FallbackMessage)
+				t.Errorf("Distill(%q, %q) = %q, want %q", tt.output, tt.diff, msg, FallbackMessage)
 			}
 		})
 	}
@@ -94,7 +95,7 @@ func TestDistill_DoneMarker(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			msg, err := d.Distill(ctx, tt.input)
+			msg, err := d.Distill(ctx, tt.input, "some diff")
 
 			if err != nil {
 				t.Errorf("Distill() returned error: %v", err)
@@ -115,14 +116,19 @@ func TestDistill_NormalOutput(t *testing.T) {
 	d := newMockedDistiller("feat: add user authentication")
 
 	ctx := context.Background()
-	input := `## Progress
+	sessionOutput := `## Progress
 - Added login form component
 - Implemented JWT token validation
 
 ## Learnings
 - React hooks work well for form state`
 
-	msg, err := d.Distill(ctx, input)
+	diff := `diff --git a/login.go b/login.go
++func Login(username, password string) error {
++    // JWT validation logic
++}`
+
+	msg, err := d.Distill(ctx, sessionOutput, diff)
 	if err != nil {
 		t.Errorf("Distill() returned error: %v", err)
 	}
@@ -137,7 +143,7 @@ func TestDistill_MultilineResponse(t *testing.T) {
 	d := newMockedDistiller("fix: resolve database connection issue\n\nThis fixes the timeout problem with pooling.")
 
 	ctx := context.Background()
-	msg, err := d.Distill(ctx, "Fixed the database issue")
+	msg, err := d.Distill(ctx, "Fixed the database issue", "diff --git a/db.go b/db.go")
 
 	if err != nil {
 		t.Errorf("Distill() returned error: %v", err)
@@ -154,7 +160,7 @@ func TestDistill_ResponseWithWhitespace(t *testing.T) {
 	d := newMockedDistiller("  refactor: clean up error handling  \n")
 
 	ctx := context.Background()
-	msg, err := d.Distill(ctx, "Cleaned up the code")
+	msg, err := d.Distill(ctx, "Cleaned up the code", "diff --git a/main.go b/main.go")
 
 	if err != nil {
 		t.Errorf("Distill() returned error: %v", err)
@@ -170,7 +176,7 @@ func TestDistill_EmptyResponse(t *testing.T) {
 	d := newMockedDistiller("")
 
 	ctx := context.Background()
-	msg, err := d.Distill(ctx, "Some progress was made")
+	msg, err := d.Distill(ctx, "Some progress was made", "diff --git a/file.go b/file.go")
 
 	if err != nil {
 		t.Errorf("Distill() returned error: %v", err)
@@ -192,7 +198,7 @@ func TestDistill_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	msg, err := d.Distill(ctx, "Some work done")
+	msg, err := d.Distill(ctx, "Some work done", "diff --git a/file.go b/file.go")
 
 	// Should return fallback message on timeout/cancellation
 	if msg != FallbackMessage && msg != "test message" {

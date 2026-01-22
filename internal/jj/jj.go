@@ -179,3 +179,13 @@ func (c *Client) Log(ctx context.Context, revset string, template string) (strin
 	}
 	return c.runCommand(ctx, args...)
 }
+
+// IsEmpty returns true if the current change has no file modifications.
+// It uses `jj diff` which returns empty output when there are no changes.
+func (c *Client) IsEmpty(ctx context.Context) (bool, error) {
+	output, err := c.runCommand(ctx, "diff")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) == "", nil
+}

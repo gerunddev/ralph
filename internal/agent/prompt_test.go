@@ -434,3 +434,352 @@ func TestBuildPrompt_LongContent(t *testing.T) {
 		t.Error("long learnings content was truncated")
 	}
 }
+
+// =============================================================================
+// V1.5 Developer Prompt Tests
+// =============================================================================
+
+func TestBuildV15DeveloperPrompt_AllFieldsPopulated(t *testing.T) {
+	ctx := V15DeveloperContext{
+		PlanContent:      "Build a REST API with authentication",
+		Progress:         "Completed user model",
+		Learnings:        "Uses GORM for database",
+		ReviewerFeedback: "",
+	}
+
+	result, err := BuildV15DeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check instructions section
+	if !strings.Contains(result, "# Instructions") {
+		t.Error("missing Instructions header")
+	}
+	if !strings.Contains(result, "experienced software developer") {
+		t.Error("missing developer persona")
+	}
+
+	// Should use DEV_DONE marker, not DONE DONE DONE
+	if !strings.Contains(result, "DEV_DONE DEV_DONE DEV_DONE!!!") {
+		t.Error("missing DEV_DONE marker in instructions")
+	}
+	// Should NOT contain old DONE marker in instructions
+	if strings.Contains(result, "DONE DONE DONE!!!") {
+		t.Error("should use DEV_DONE, not old DONE marker")
+	}
+
+	// Check plan section
+	if !strings.Contains(result, "# Plan") {
+		t.Error("missing Plan header")
+	}
+	if !strings.Contains(result, "Build a REST API with authentication") {
+		t.Error("plan content not injected")
+	}
+
+	// Check progress section
+	if !strings.Contains(result, "# Progress So Far") {
+		t.Error("missing Progress So Far header")
+	}
+	if !strings.Contains(result, "Completed user model") {
+		t.Error("progress content not injected")
+	}
+
+	// Check learnings section
+	if !strings.Contains(result, "# Learnings So Far") {
+		t.Error("missing Learnings So Far header")
+	}
+	if !strings.Contains(result, "Uses GORM for database") {
+		t.Error("learnings content not injected")
+	}
+
+	// Should NOT contain reviewer feedback section (empty)
+	if strings.Contains(result, "# Reviewer Feedback") {
+		t.Error("should not show reviewer feedback section when empty")
+	}
+}
+
+func TestBuildV15DeveloperPrompt_WithReviewerFeedback(t *testing.T) {
+	ctx := V15DeveloperContext{
+		PlanContent:      "Build an API",
+		Progress:         "In progress",
+		Learnings:        "Learning things",
+		ReviewerFeedback: "Missing error handling in auth.go:42",
+	}
+
+	result, err := BuildV15DeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain reviewer feedback section
+	if !strings.Contains(result, "# Reviewer Feedback") {
+		t.Error("missing Reviewer Feedback header when feedback provided")
+	}
+	if !strings.Contains(result, "Missing error handling in auth.go:42") {
+		t.Error("reviewer feedback content not injected")
+	}
+	if !strings.Contains(result, "MUST ADDRESS") {
+		t.Error("missing emphasis on addressing feedback")
+	}
+}
+
+func TestBuildV15DeveloperPrompt_EmptyPlan(t *testing.T) {
+	ctx := V15DeveloperContext{
+		PlanContent: "",
+		Progress:    "Some progress",
+		Learnings:   "Some learnings",
+	}
+
+	_, err := BuildV15DeveloperPrompt(ctx)
+	if err == nil {
+		t.Fatal("expected error for empty PlanContent")
+	}
+
+	if !errors.Is(err, ErrEmptyPlanContent) {
+		t.Errorf("expected ErrEmptyPlanContent, got: %v", err)
+	}
+}
+
+func TestBuildV15DeveloperPrompt_Fallbacks(t *testing.T) {
+	ctx := V15DeveloperContext{
+		PlanContent:      "Test plan",
+		Progress:         "",
+		Learnings:        "",
+		ReviewerFeedback: "",
+	}
+
+	result, err := BuildV15DeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should show both fallbacks
+	if !strings.Contains(result, "No progress yet.") {
+		t.Error("should show progress fallback")
+	}
+	if !strings.Contains(result, "No learnings yet.") {
+		t.Error("should show learnings fallback")
+	}
+}
+
+func TestBuildV15DeveloperPrompt_WhitespaceNormalized(t *testing.T) {
+	ctx := V15DeveloperContext{
+		PlanContent:      "Test plan",
+		Progress:         "   ",
+		Learnings:        "\t\n",
+		ReviewerFeedback: "  \n  ",
+	}
+
+	result, err := BuildV15DeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Whitespace-only should trigger fallbacks
+	if !strings.Contains(result, "No progress yet.") {
+		t.Error("whitespace progress should trigger fallback")
+	}
+	if !strings.Contains(result, "No learnings yet.") {
+		t.Error("whitespace learnings should trigger fallback")
+	}
+	// Whitespace feedback should NOT show section
+	if strings.Contains(result, "# Reviewer Feedback") {
+		t.Error("whitespace feedback should not show section")
+	}
+}
+
+// =============================================================================
+// V1.5 Reviewer Prompt Tests
+// =============================================================================
+
+func TestBuildV15ReviewerPrompt_AllFieldsPopulated(t *testing.T) {
+	ctx := V15ReviewerContext{
+		PlanContent:      "Build a REST API",
+		Progress:         "Completed implementation",
+		Learnings:        "Uses Go patterns",
+		DiffOutput:       "+ func NewUser() {}\n- func OldUser() {}",
+		DeveloperSummary: "Added user creation endpoint",
+	}
+
+	result, err := BuildV15ReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Check reviewer-specific instructions
+	if !strings.Contains(result, "VERY HARD CRITIC") {
+		t.Error("missing very hard critic instruction")
+	}
+	if !strings.Contains(result, "ONLY approve") {
+		t.Error("missing strict approval criteria")
+	}
+
+	// Check approval/feedback markers
+	if !strings.Contains(result, "REVIEWER_APPROVED REVIEWER_APPROVED!!!") {
+		t.Error("missing REVIEWER_APPROVED marker")
+	}
+	if !strings.Contains(result, "REVIEWER_FEEDBACK:") {
+		t.Error("missing REVIEWER_FEEDBACK prefix instruction")
+	}
+
+	// Check checklist items
+	checklistItems := []string{
+		"Correctness",
+		"Edge Cases",
+		"Error Handling",
+		"Security",
+		"Performance",
+		"Tests",
+		"Style",
+		"Documentation",
+	}
+	for _, item := range checklistItems {
+		if !strings.Contains(result, item) {
+			t.Errorf("missing checklist item: %s", item)
+		}
+	}
+
+	// Check issue sections instruction
+	if !strings.Contains(result, "Critical Issues") {
+		t.Error("missing Critical Issues section instruction")
+	}
+	if !strings.Contains(result, "Major Issues") {
+		t.Error("missing Major Issues section instruction")
+	}
+	if !strings.Contains(result, "Minor Issues") {
+		t.Error("missing Minor Issues section instruction")
+	}
+
+	// Check diff section
+	if !strings.Contains(result, "# Diff to Review") {
+		t.Error("missing Diff to Review header")
+	}
+	if !strings.Contains(result, "+ func NewUser()") {
+		t.Error("diff content not injected")
+	}
+	if !strings.Contains(result, "```diff") {
+		t.Error("diff should be in code block")
+	}
+
+	// Check developer summary section
+	if !strings.Contains(result, "# Developer Summary") {
+		t.Error("missing Developer Summary header")
+	}
+	if !strings.Contains(result, "Added user creation endpoint") {
+		t.Error("developer summary not injected")
+	}
+}
+
+func TestBuildV15ReviewerPrompt_EmptyPlan(t *testing.T) {
+	ctx := V15ReviewerContext{
+		PlanContent: "",
+		Progress:    "Some progress",
+		Learnings:   "Some learnings",
+		DiffOutput:  "some diff",
+	}
+
+	_, err := BuildV15ReviewerPrompt(ctx)
+	if err == nil {
+		t.Fatal("expected error for empty PlanContent")
+	}
+
+	if !errors.Is(err, ErrEmptyPlanContent) {
+		t.Errorf("expected ErrEmptyPlanContent, got: %v", err)
+	}
+}
+
+func TestBuildV15ReviewerPrompt_Fallbacks(t *testing.T) {
+	ctx := V15ReviewerContext{
+		PlanContent:      "Test plan",
+		Progress:         "",
+		Learnings:        "",
+		DiffOutput:       "",
+		DeveloperSummary: "",
+	}
+
+	result, err := BuildV15ReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should show fallbacks
+	if !strings.Contains(result, "No progress yet.") {
+		t.Error("should show progress fallback")
+	}
+	if !strings.Contains(result, "No learnings yet.") {
+		t.Error("should show learnings fallback")
+	}
+	if !strings.Contains(result, "No diff available.") {
+		t.Error("should show diff fallback")
+	}
+	if !strings.Contains(result, "No developer summary available.") {
+		t.Error("should show developer summary fallback")
+	}
+}
+
+func TestBuildV15ReviewerPrompt_ZeroIssuesApproval(t *testing.T) {
+	ctx := V15ReviewerContext{
+		PlanContent: "Test plan",
+		Progress:    "Complete",
+		Learnings:   "Done",
+		DiffOutput:  "some changes",
+	}
+
+	result, err := BuildV15ReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Instructions should emphasize zero tolerance for issues
+	if !strings.Contains(result, "Zero critical issues") {
+		t.Error("missing zero critical issues requirement")
+	}
+	if !strings.Contains(result, "Zero major issues") {
+		t.Error("missing zero major issues requirement")
+	}
+	if !strings.Contains(result, "Zero minor issues") {
+		t.Error("missing zero minor issues requirement")
+	}
+}
+
+func TestV15DeveloperPromptTemplate_IsValid(t *testing.T) {
+	// Verify the template is not empty and contains required variables
+	if V15DeveloperPromptTemplate == "" {
+		t.Fatal("V15DeveloperPromptTemplate should not be empty")
+	}
+
+	requiredVars := []string{
+		"{{.PlanContent}}",
+		"{{.Progress}}",
+		"{{.Learnings}}",
+		"{{.ReviewerFeedback}}",
+	}
+
+	for _, v := range requiredVars {
+		if !strings.Contains(V15DeveloperPromptTemplate, v) {
+			t.Errorf("V15DeveloperPromptTemplate missing required variable: %s", v)
+		}
+	}
+}
+
+func TestV15ReviewerPromptTemplate_IsValid(t *testing.T) {
+	// Verify the template is not empty and contains required variables
+	if V15ReviewerPromptTemplate == "" {
+		t.Fatal("V15ReviewerPromptTemplate should not be empty")
+	}
+
+	requiredVars := []string{
+		"{{.PlanContent}}",
+		"{{.Progress}}",
+		"{{.Learnings}}",
+		"{{.DiffOutput}}",
+		"{{.DeveloperSummary}}",
+	}
+
+	for _, v := range requiredVars {
+		if !strings.Contains(V15ReviewerPromptTemplate, v) {
+			t.Errorf("V15ReviewerPromptTemplate missing required variable: %s", v)
+		}
+	}
+}

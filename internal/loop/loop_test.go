@@ -94,9 +94,28 @@ func createMockClaudeOutput(text string) string {
 	return string(initJSON) + "\n" + string(messageJSON) + "\n" + string(resultJSON)
 }
 
-// mockJJRunner creates a jj command runner that does nothing.
+// mockJJRunner creates a jj command runner that handles common commands.
+// It returns non-empty diff (so IsEmpty returns false), and a sample diff for show.
 func mockJJRunner() jj.CommandRunner {
 	return func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
+		if len(args) >= 1 && args[0] == "diff" {
+			// Return non-empty diff so jj new is called
+			return "diff --git a/file.go b/file.go\n+// new code", "", nil
+		}
+		if len(args) >= 1 && args[0] == "show" {
+			// Return a sample diff for distillation
+			return "diff --git a/file.go b/file.go\n+// new code", "", nil
+		}
+		return "", "", nil
+	}
+}
+
+// mockJJRunnerEmpty creates a jj command runner where IsEmpty returns true.
+func mockJJRunnerEmpty() jj.CommandRunner {
+	return func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
+		if len(args) >= 1 && args[0] == "show" {
+			return "", "", nil
+		}
 		return "", "", nil
 	}
 }
@@ -507,6 +526,170 @@ func TestLoopEventTypes(t *testing.T) {
 	}
 }
 
+func TestLoopSkipsJJNewWhenEmpty(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	// Create mock Claude client that outputs done
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreator("DONE DONE DONE!!!"))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client that returns empty diff (IsEmpty = true)
+	jjClient := jj.NewClient("/tmp")
+	var jjNewCalled bool
+	jjClient.SetCommandRunner(func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
+		if len(args) >= 1 && args[0] == "new" {
+			jjNewCalled = true
+		}
+		// Return empty diff so IsEmpty returns true
+		return "", "", nil
+	})
+
+	// Create loop
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Collect events
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// jj new should NOT have been called because diff was empty
+	if jjNewCalled {
+		t.Error("jj new was called when change was empty - should have been skipped")
+	}
+
+	// Verify we got the "skipping" event message
+	var foundSkipMessage bool
+	for _, e := range events {
+		if e.Type == EventJJNew && strings.Contains(e.Message, "Skipping") {
+			foundSkipMessage = true
+			break
+		}
+	}
+	if !foundSkipMessage {
+		t.Error("expected EventJJNew with 'Skipping' message when change is empty")
+	}
+}
+
+func TestLoopCallsJJNewWhenNotEmpty(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	// Create mock Claude client that outputs done
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreator("DONE DONE DONE!!!"))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client that returns non-empty diff
+	jjClient := jj.NewClient("/tmp")
+	var jjNewCalled bool
+	jjClient.SetCommandRunner(func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
+		if len(args) >= 1 && args[0] == "new" {
+			jjNewCalled = true
+		}
+		if len(args) >= 1 && args[0] == "diff" {
+			// Return non-empty diff
+			return "diff --git a/file.go b/file.go\n+// new code", "", nil
+		}
+		if len(args) >= 1 && args[0] == "show" {
+			return "diff --git a/file.go b/file.go", "", nil
+		}
+		return "", "", nil
+	})
+
+	// Create loop
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Collect events
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// jj new SHOULD have been called because diff was not empty
+	if !jjNewCalled {
+		t.Error("jj new was NOT called when change was not empty - should have been called")
+	}
+
+	// Verify we got the "Creating" event message (not "Skipping")
+	var foundCreateMessage bool
+	for _, e := range events {
+		if e.Type == EventJJNew && strings.Contains(e.Message, "Creating") {
+			foundCreateMessage = true
+			break
+		}
+	}
+	if !foundCreateMessage {
+		t.Error("expected EventJJNew with 'Creating' message when change is not empty")
+	}
+}
+
 func TestNewEvent(t *testing.T) {
 	event := NewEvent(EventStarted, 1, 10, "test message")
 
@@ -592,5 +775,984 @@ func TestNewClaudeOutputEvent(t *testing.T) {
 	}
 	if event.Message != "Claude output collected" {
 		t.Errorf("expected message 'Claude output collected', got: %q", event.Message)
+	}
+}
+
+// createMockClaudeOutputWithToolUse creates mock Claude stream-json output that includes tool use events.
+func createMockClaudeOutputWithToolUse(text string, toolNames ...string) string {
+	var lines []string
+
+	// Create init event
+	initEvent := map[string]interface{}{
+		"type":       "init",
+		"session_id": "test-session-123",
+		"model":      "test-model",
+		"cwd":        "/test",
+	}
+	initJSON, _ := json.Marshal(initEvent)
+	lines = append(lines, string(initJSON))
+
+	// Create tool_use events for each tool
+	for i, toolName := range toolNames {
+		toolUseEvent := map[string]interface{}{
+			"message": map[string]interface{}{
+				"id":          "msg-tool-" + string(rune('0'+i)),
+				"role":        "assistant",
+				"model":       "test-model",
+				"stop_reason": "tool_use",
+				"content": []map[string]interface{}{
+					{
+						"type":  "tool_use",
+						"id":    "tool-" + string(rune('0'+i)),
+						"name":  toolName,
+						"input": map[string]interface{}{},
+					},
+				},
+			},
+		}
+		toolJSON, _ := json.Marshal(toolUseEvent)
+		lines = append(lines, string(toolJSON))
+	}
+
+	// Create message event with the text
+	messageEvent := map[string]interface{}{
+		"message": map[string]interface{}{
+			"id":          "msg-123",
+			"role":        "assistant",
+			"model":       "test-model",
+			"stop_reason": "end_turn",
+			"content": []map[string]interface{}{
+				{"type": "text", "text": text},
+			},
+		},
+	}
+	messageJSON, _ := json.Marshal(messageEvent)
+	lines = append(lines, string(messageJSON))
+
+	// Create result event
+	resultEvent := map[string]interface{}{
+		"type":       "result",
+		"session_id": "test-session-123",
+		"result":     text,
+		"cost_usd":   0.001,
+		"num_turns":  1,
+	}
+	resultJSON, _ := json.Marshal(resultEvent)
+	lines = append(lines, string(resultJSON))
+
+	return strings.Join(lines, "\n")
+}
+
+// mockClaudeCreatorWithToolUse creates a command creator that simulates Claude output with tool use.
+func mockClaudeCreatorWithToolUse(output string, toolNames ...string) claude.CommandCreator {
+	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		jsonOutput := createMockClaudeOutputWithToolUse(output, toolNames...)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	}
+}
+
+func TestLoopDoneMarkerIgnoredWithEdits(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	// Create mock Claude client that outputs "DONE DONE DONE!!!" but also uses an Edit tool
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	// Simulate using Edit tool then saying DONE
+	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
+		"## Progress\nMade edits\n\n## Status\nDONE DONE DONE!!!",
+		"Edit",
+	))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{
+		Model:    "haiku",
+		MaxTurns: 1,
+	})
+	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create loop with max 2 iterations - if DONE is accepted, we'd only run 1
+	// If DONE is ignored (correctly), we should hit max iterations
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 2,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Collect events with proper synchronization
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	// Run the loop
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	// Wait for event collection to complete
+	wg.Wait()
+
+	// Should NOT have EventDone since DONE was rejected
+	var foundDone bool
+	for _, e := range events {
+		if e.Type == EventDone {
+			foundDone = true
+			break
+		}
+	}
+	if foundDone {
+		t.Error("expected EventDone NOT to be emitted when session had edits")
+	}
+
+	// Should have EventMaxIterations since loop continued after rejecting DONE
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+			break
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations event when DONE is rejected due to edits")
+	}
+
+	// Plan should NOT be marked complete
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status == db.PlanStatusCompleted {
+		t.Error("expected plan NOT to be marked complete when DONE was rejected")
+	}
+}
+
+func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	// Create mock Claude client that outputs "DONE DONE DONE!!!" with only Read tool (not an edit tool)
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	// Simulate using Read tool (not an edit) then saying DONE
+	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
+		"## Progress\nReviewed code\n\n## Status\nDONE DONE DONE!!!",
+		"Read",
+	))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{
+		Model:    "haiku",
+		MaxTurns: 1,
+	})
+	distillerClient.SetCommandCreator(mockDistillerCreator("Complete implementation"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create loop with high max iterations
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Collect events
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	// Run the loop
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// Should have EventDone since DONE was accepted (no edits)
+	var foundDone bool
+	for _, e := range events {
+		if e.Type == EventDone {
+			foundDone = true
+			break
+		}
+	}
+	if !foundDone {
+		t.Error("expected EventDone to be emitted when session had no edits")
+	}
+
+	// Plan should be marked complete
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status != db.PlanStatusCompleted {
+		t.Errorf("expected plan status 'completed', got: %s", updatedPlan.Status)
+	}
+
+	// Iteration should be 1 (only ran once)
+	if loop.CurrentIteration() != 1 {
+		t.Errorf("expected iteration 1, got: %d", loop.CurrentIteration())
+	}
+}
+
+func TestDoneMarkerSanitizedFromProgress(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	// Create mock Claude client that has DONE marker in progress section and uses Edit
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	// Progress contains DONE marker, and we use Edit tool
+	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
+		"## Progress\nDONE DONE DONE!!! - completed work\n\n## Learnings\nLearned about DONE DONE DONE!!! marker\n\n## Status\nDONE DONE DONE!!!",
+		"Write", // Using Write tool (an edit tool)
+	))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{
+		Model:    "haiku",
+		MaxTurns: 1,
+	})
+	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create loop with max 1 iteration
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Drain events
+	go func() {
+		for range loop.Events() {
+		}
+	}()
+
+	// Run the loop
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	// Verify progress was stored WITHOUT the DONE marker
+	progress, err := database.GetLatestProgress(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get progress: %v", err)
+	}
+	if progress == nil {
+		t.Fatal("expected progress to be stored")
+	}
+	if strings.Contains(progress.Content, "DONE DONE DONE!!!") {
+		t.Errorf("expected DONE marker to be sanitized from progress, got: %s", progress.Content)
+	}
+	if !strings.Contains(progress.Content, "completed work") {
+		t.Errorf("expected progress to contain 'completed work', got: %s", progress.Content)
+	}
+
+	// Verify learnings was stored WITHOUT the DONE marker
+	learnings, err := database.GetLatestLearnings(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get learnings: %v", err)
+	}
+	if learnings == nil {
+		t.Fatal("expected learnings to be stored")
+	}
+	if strings.Contains(learnings.Content, "DONE DONE DONE!!!") {
+		t.Errorf("expected DONE marker to be sanitized from learnings, got: %s", learnings.Content)
+	}
+	if !strings.Contains(learnings.Content, "Learned about") {
+		t.Errorf("expected learnings to contain 'Learned about', got: %s", learnings.Content)
+	}
+}
+
+func TestIsEditTool(t *testing.T) {
+	editTools := []string{"Edit", "Write", "NotebookEdit"}
+	nonEditTools := []string{"Read", "Bash", "Glob", "Grep", "Task", "WebFetch", ""}
+
+	for _, tool := range editTools {
+		if !isEditTool(tool) {
+			t.Errorf("expected %q to be classified as an edit tool", tool)
+		}
+	}
+
+	for _, tool := range nonEditTools {
+		if isEditTool(tool) {
+			t.Errorf("expected %q to NOT be classified as an edit tool", tool)
+		}
+	}
+}
+
+func TestSanitizeDoneMarker(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"DONE DONE DONE!!!", ""},
+		{"Some text DONE DONE DONE!!! more text", "Some text  more text"},
+		{"No marker here", "No marker here"},
+		{"DONE DONE DONE!!! at start", " at start"},
+		{"at end DONE DONE DONE!!!", "at end "},
+		{"Multiple DONE DONE DONE!!! markers DONE DONE DONE!!!", "Multiple  markers "},
+	}
+
+	for _, tc := range tests {
+		result := sanitizeDoneMarker(tc.input)
+		if result != tc.expected {
+			t.Errorf("sanitizeDoneMarker(%q) = %q, expected %q", tc.input, result, tc.expected)
+		}
+	}
+}
+
+func TestSanitizeDevDoneMarker(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"DEV_DONE DEV_DONE DEV_DONE!!!", ""},
+		{"Some text DEV_DONE DEV_DONE DEV_DONE!!! more text", "Some text  more text"},
+		{"No marker here", "No marker here"},
+		{"DEV_DONE DEV_DONE DEV_DONE!!! at start", " at start"},
+		{"at end DEV_DONE DEV_DONE DEV_DONE!!!", "at end "},
+	}
+
+	for _, tc := range tests {
+		result := sanitizeDevDoneMarker(tc.input)
+		if result != tc.expected {
+			t.Errorf("sanitizeDevDoneMarker(%q) = %q, expected %q", tc.input, result, tc.expected)
+		}
+	}
+}
+
+// =============================================================================
+// V1.5 Loop Tests
+// =============================================================================
+
+func TestLoopV15_DeveloperOnlyIteration(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	// Create mock Claude client that outputs developer progress (no DEV_DONE)
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nWorking on feature\n\n## Learnings\nFound pattern\n\n## Status\nRUNNING RUNNING RUNNING"))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("wip: working on feature"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create V1.5 loop with max 1 iteration
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should have developer events but NOT reviewer events (no DEV_DONE)
+	var foundDevStart, foundDevEnd, foundReviewerStart bool
+	for _, e := range events {
+		if e.Type == EventDeveloperStart {
+			foundDevStart = true
+		}
+		if e.Type == EventDeveloperEnd {
+			foundDevEnd = true
+		}
+		if e.Type == EventReviewerStart {
+			foundReviewerStart = true
+		}
+	}
+
+	if !foundDevStart {
+		t.Error("expected EventDeveloperStart")
+	}
+	if !foundDevEnd {
+		t.Error("expected EventDeveloperEnd")
+	}
+	if foundReviewerStart {
+		t.Error("reviewer should NOT start when developer didn't signal DEV_DONE")
+	}
+
+	// Verify progress was stored
+	progress, err := database.GetLatestProgress(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get progress: %v", err)
+	}
+	if progress == nil || !strings.Contains(progress.Content, "Working on feature") {
+		t.Errorf("expected progress to contain 'Working on feature'")
+	}
+}
+
+func TestLoopV15_DeveloperDoneTriggersReviewer(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	// Track which prompts are being built to differentiate developer vs reviewer calls
+	callCount := 0
+
+	// Create mock Claude client with call tracking
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// First call is developer - signal DEV_DONE
+			output = "## Progress\nCompleted work\n\n## Learnings\nLearned stuff\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else {
+			// Second call is reviewer - approve
+			output = "## Progress\nReviewed code\n\n## Learnings\nCode looks good\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("Complete feature"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client - return empty diff so developer can signal done
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	// Create V1.5 loop
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should have both developer and reviewer events
+	var foundDevDone, foundReviewerStart, foundReviewerApproved, foundBothDone bool
+	for _, e := range events {
+		if e.Type == EventDeveloperDone {
+			foundDevDone = true
+		}
+		if e.Type == EventReviewerStart {
+			foundReviewerStart = true
+		}
+		if e.Type == EventReviewerApproved {
+			foundReviewerApproved = true
+		}
+		if e.Type == EventBothDone {
+			foundBothDone = true
+		}
+	}
+
+	if !foundDevDone {
+		t.Error("expected EventDeveloperDone")
+	}
+	if !foundReviewerStart {
+		t.Error("expected EventReviewerStart when developer signaled DEV_DONE")
+	}
+	if !foundReviewerApproved {
+		t.Error("expected EventReviewerApproved")
+	}
+	if !foundBothDone {
+		t.Error("expected EventBothDone")
+	}
+
+	// Plan should be completed
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status != db.PlanStatusCompleted {
+		t.Errorf("expected plan status 'completed', got: %s", updatedPlan.Status)
+	}
+}
+
+func TestLoopV15_DevDoneIgnoredWithEdits(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	// Create mock Claude client that outputs DEV_DONE but also uses Edit tool
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
+		"## Progress\nMade edits\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!",
+		"Edit",
+	))
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("wip"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create V1.5 loop with max 2 iterations
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 2,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should NOT trigger reviewer since DEV_DONE was ignored due to edits
+	var foundReviewerStart bool
+	for _, e := range events {
+		if e.Type == EventReviewerStart {
+			foundReviewerStart = true
+		}
+	}
+
+	if foundReviewerStart {
+		t.Error("reviewer should NOT start when DEV_DONE is ignored due to edits")
+	}
+
+	// Should hit max iterations
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations when DEV_DONE is ignored")
+	}
+}
+
+func TestLoopV15_ReviewerRejects(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	callCount := 0
+
+	// Create mock Claude client
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// Developer signals done
+			output = "## Progress\nCompleted work\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else if callCount == 2 {
+			// Reviewer rejects
+			output = "## Progress\nReviewed code\n\n### Critical Issues\nNone\n\n### Major Issues\n- Missing error handling in auth.go:42\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_FEEDBACK: Fix the error handling issue"
+		} else {
+			// Subsequent developer calls (max iterations will stop it)
+			output = "## Progress\nFixed issues\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("wip"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	// Create V1.5 loop with max 1 iteration so feedback persists
+	// (iteration 2 would clear feedback after developer sees it)
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should have reviewer feedback event
+	var foundReviewerFeedback bool
+	for _, e := range events {
+		if e.Type == EventReviewerFeedback {
+			foundReviewerFeedback = true
+		}
+	}
+	if !foundReviewerFeedback {
+		t.Error("expected EventReviewerFeedback")
+	}
+
+	// Should NOT have both done (reviewer rejected)
+	var foundBothDone bool
+	for _, e := range events {
+		if e.Type == EventBothDone {
+			foundBothDone = true
+		}
+	}
+	if foundBothDone {
+		t.Error("should NOT have EventBothDone when reviewer rejects")
+	}
+
+	// Feedback should be stored
+	feedback, err := database.GetLatestReviewerFeedback(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get feedback: %v", err)
+	}
+	if feedback == nil {
+		t.Error("expected reviewer feedback to be stored")
+	} else if !strings.Contains(feedback.Content, "error handling") {
+		t.Errorf("expected feedback to contain 'error handling', got: %s", feedback.Content)
+	}
+}
+
+func TestLoopV15_FeedbackIncludedInNextIteration(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	// Pre-store some reviewer feedback
+	session := &db.PlanSession{
+		ID:          uuid.New().String(),
+		PlanID:      plan.ID,
+		Iteration:   0,
+		InputPrompt: "previous",
+		Status:      db.PlanSessionCompleted,
+		AgentType:   db.V15AgentReviewer,
+	}
+	if err := database.CreatePlanSession(session); err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	feedback := &db.ReviewerFeedback{
+		PlanID:    plan.ID,
+		SessionID: session.ID,
+		Content:   "Fix the security vulnerability in auth.go",
+	}
+	if err := database.CreateReviewerFeedback(feedback); err != nil {
+		t.Fatalf("failed to create feedback: %v", err)
+	}
+
+	// Track the prompt passed to Claude
+	var capturedPrompt string
+
+	// Create mock Claude client
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		// Capture the prompt from args (claude-code passes prompt via args)
+		for i, arg := range args {
+			if arg == "-p" && i+1 < len(args) {
+				capturedPrompt = args[i+1]
+			}
+		}
+		jsonOutput := createMockClaudeOutput("## Progress\nFixed security issue\n\n## Status\nRUNNING RUNNING RUNNING")
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("fix security"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	// Create V1.5 loop with max 1 iteration
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Capture prompt from events
+	var promptFromEvent string
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			if event.Type == EventPromptBuilt && event.Prompt != "" {
+				promptFromEvent = event.Prompt
+			}
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// The prompt should include the reviewer feedback
+	promptToCheck := promptFromEvent
+	if promptToCheck == "" {
+		promptToCheck = capturedPrompt
+	}
+
+	if promptToCheck != "" && !strings.Contains(promptToCheck, "security vulnerability") {
+		t.Errorf("expected developer prompt to include reviewer feedback about 'security vulnerability'")
+	}
+
+	// Feedback should be cleared after developer sees it
+	remainingFeedback, err := database.GetLatestReviewerFeedback(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get feedback: %v", err)
+	}
+	if remainingFeedback != nil {
+		t.Error("expected reviewer feedback to be cleared after developer sees it")
+	}
+}
+
+func TestLoopV15_AgentTypeStoredInSession(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test V1.5 plan content")
+
+	callCount := 0
+
+	// Create mock Claude client
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			output = "## Progress\nDone\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else {
+			output = "### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("done"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	// Create V1.5 loop
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		WorkDir:       "/tmp",
+		UseV15:        true,
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() {
+		for range loop.Events() {
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	// Verify sessions were created with correct agent types
+	sessions, err := database.GetPlanSessionsByPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get sessions: %v", err)
+	}
+
+	if len(sessions) < 2 {
+		t.Fatalf("expected at least 2 sessions (developer + reviewer), got %d", len(sessions))
+	}
+
+	var foundDeveloper, foundReviewer bool
+	for _, s := range sessions {
+		if s.AgentType == db.V15AgentDeveloper {
+			foundDeveloper = true
+		}
+		if s.AgentType == db.V15AgentReviewer {
+			foundReviewer = true
+		}
+	}
+
+	if !foundDeveloper {
+		t.Error("expected developer session to be stored")
+	}
+	if !foundReviewer {
+		t.Error("expected reviewer session to be stored")
 	}
 }

@@ -126,3 +126,37 @@ var (
 				Foreground(colorGreen).
 				Bold(true)
 )
+
+// Message content styles - for aesthetic formatting of Claude session output
+var (
+	// Tool call styling - cyan/blue tones for tool invocations
+	colorCyan      = lipgloss.Color("#78dce8")
+	colorLightCyan = lipgloss.Color("#a1eaf8")
+
+	toolNameStyle = lipgloss.NewStyle().
+			Foreground(colorCyan).
+			Bold(true)
+
+	toolParamStyle = lipgloss.NewStyle().
+			Foreground(colorLightCyan)
+
+	toolBracketStyle = lipgloss.NewStyle().
+				Foreground(colorDimGray)
+
+	// Section dividers and markers
+	iterationMarkerStyle = lipgloss.NewStyle().
+				Foreground(colorMagenta).
+				Bold(true)
+
+	sectionDividerStyle = lipgloss.NewStyle().
+				Foreground(colorDimGray)
+
+	doneMarkerStyle = lipgloss.NewStyle().
+			Foreground(colorGreen).
+			Bold(true)
+
+	// System messages (jj operations, commits, etc.)
+	systemMessageStyle = lipgloss.NewStyle().
+				Foreground(colorGray).
+				Italic(true)
+)

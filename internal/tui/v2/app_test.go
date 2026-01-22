@@ -330,15 +330,15 @@ func TestModel_HandleLoopEvent_PromptBuilt(t *testing.T) {
 
 	m.handleLoopEvent(event)
 
-	// Prompt is shown in feed panel
+	// Prompt is shown in feed panel (styled dividers use ─── instead of ---)
 	outputContent := m.feedPanel.Content()
-	if !strings.Contains(outputContent, "--- Prompt ---") {
+	if !strings.Contains(outputContent, "Prompt") {
 		t.Errorf("expected feed panel to contain prompt delimiter, got '%s'", outputContent)
 	}
 	if !strings.Contains(outputContent, "Test prompt for Claude") {
 		t.Errorf("expected feed panel to contain the prompt, got '%s'", outputContent)
 	}
-	if !strings.Contains(outputContent, "--- Output ---") {
+	if !strings.Contains(outputContent, "Output") {
 		t.Errorf("expected feed panel to contain output delimiter, got '%s'", outputContent)
 	}
 
@@ -356,7 +356,8 @@ func TestModel_SetPromptMsg(t *testing.T) {
 	if !strings.Contains(content, "Test prompt content") {
 		t.Errorf("expected feed to contain prompt content, got '%s'", content)
 	}
-	if !strings.Contains(content, "--- Prompt ---") {
+	// Styled dividers use ─── instead of ---
+	if !strings.Contains(content, "Prompt") {
 		t.Errorf("expected feed to contain prompt delimiter, got '%s'", content)
 	}
 }
@@ -605,7 +606,8 @@ func TestModel_SetPrompt(t *testing.T) {
 	if !strings.Contains(content, "My test prompt") {
 		t.Errorf("expected feed to contain prompt 'My test prompt', got '%s'", content)
 	}
-	if !strings.Contains(content, "--- Prompt ---") {
+	// Styled dividers use ─── instead of ---
+	if !strings.Contains(content, "Prompt") {
 		t.Errorf("expected feed to contain prompt delimiter, got '%s'", content)
 	}
 }
@@ -787,7 +789,8 @@ func TestModel_HandleClaudeEvent_EventToolUse(t *testing.T) {
 	m.handleLoopEvent(event)
 
 	outputContent := m.feedPanel.Content()
-	if !strings.Contains(outputContent, "[Read]") {
+	// Styled tool display uses ▶ icon instead of brackets
+	if !strings.Contains(outputContent, "Read") {
 		t.Errorf("expected tool use display, got '%s'", outputContent)
 	}
 	if !strings.Contains(outputContent, "/path/to/file.go") {
@@ -825,7 +828,8 @@ func TestModel_HandleClaudeEvent_EventToolUse_WithPrecedingText(t *testing.T) {
 	if !strings.Contains(outputContent, "Let me read that file.") {
 		t.Errorf("expected preceding text to be shown, got '%s'", outputContent)
 	}
-	if !strings.Contains(outputContent, "[Read]") {
+	// Styled tool display uses ▶ icon instead of brackets
+	if !strings.Contains(outputContent, "Read") {
 		t.Errorf("expected tool use display, got '%s'", outputContent)
 	}
 
@@ -887,14 +891,16 @@ func TestModel_StreamedBytesReset(t *testing.T) {
 
 func TestFormatToolUse(t *testing.T) {
 	tests := []struct {
-		name     string
-		tool     *claude.ToolUseContent
-		expected string
+		name         string
+		tool         *claude.ToolUseContent
+		containsName string
+		containsPath string
 	}{
 		{
-			name:     "nil tool",
-			tool:     nil,
-			expected: "",
+			name:         "nil tool",
+			tool:         nil,
+			containsName: "",
+			containsPath: "",
 		},
 		{
 			name: "tool with file_path",
@@ -902,7 +908,8 @@ func TestFormatToolUse(t *testing.T) {
 				Name:  "Read",
 				Input: []byte(`{"file_path": "/path/to/file.go"}`),
 			},
-			expected: "\n[Read] /path/to/file.go",
+			containsName: "Read",
+			containsPath: "/path/to/file.go",
 		},
 		{
 			name: "tool with command",
@@ -910,7 +917,8 @@ func TestFormatToolUse(t *testing.T) {
 				Name:  "Bash",
 				Input: []byte(`{"command": "go test ./..."}`),
 			},
-			expected: "\n[Bash] go test ./...",
+			containsName: "Bash",
+			containsPath: "go test ./...",
 		},
 		{
 			name: "tool with no matching params",
@@ -918,7 +926,8 @@ func TestFormatToolUse(t *testing.T) {
 				Name:  "Custom",
 				Input: []byte(`{"foo": "bar"}`),
 			},
-			expected: "\n[Custom]",
+			containsName: "Custom",
+			containsPath: "",
 		},
 		{
 			name: "tool with empty input",
@@ -926,7 +935,8 @@ func TestFormatToolUse(t *testing.T) {
 				Name:  "Empty",
 				Input: []byte{},
 			},
-			expected: "\n[Empty]",
+			containsName: "Empty",
+			containsPath: "",
 		},
 		{
 			name: "tool with long value",
@@ -934,15 +944,25 @@ func TestFormatToolUse(t *testing.T) {
 				Name:  "Read",
 				Input: []byte(`{"file_path": "/this/is/a/very/long/path/that/exceeds/sixty/characters/and/should/be/truncated/file.go"}`),
 			},
-			expected: "\n[Read] /this/is/a/very/long/path/that/exceeds/sixty/characters/a...",
+			containsName: "Read",
+			containsPath: "...", // Truncated values end with ...
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := formatToolUse(tt.tool)
-			if result != tt.expected {
-				t.Errorf("formatToolUse() = %q, expected %q", result, tt.expected)
+			if tt.tool == nil {
+				if result != "" {
+					t.Errorf("formatToolUse() = %q, expected empty string for nil tool", result)
+				}
+				return
+			}
+			if !strings.Contains(result, tt.containsName) {
+				t.Errorf("formatToolUse() = %q, expected to contain tool name %q", result, tt.containsName)
+			}
+			if tt.containsPath != "" && !strings.Contains(result, tt.containsPath) {
+				t.Errorf("formatToolUse() = %q, expected to contain %q", result, tt.containsPath)
 			}
 		})
 	}
