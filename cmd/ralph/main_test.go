@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	v2 "github.com/gerund/ralph/internal/app/v2"
+	"github.com/gerund/ralph/internal/app"
 	"github.com/gerund/ralph/internal/db"
 	"github.com/gerund/ralph/internal/jj"
 	"github.com/spf13/cobra"
@@ -537,7 +537,7 @@ func TestRunNew_PlanFileNotFound(t *testing.T) {
 	defer func() { appFactory = originalFactory }()
 
 	// App factory should not even be called
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		t.Error("appFactory should not be called when plan file doesn't exist")
 		return nil, nil
 	}
@@ -560,7 +560,7 @@ func TestRunNew_PlanFileExists_AppFactoryError(t *testing.T) {
 	defer func() { appFactory = originalFactory }()
 
 	// Mock app factory to return an error
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return nil, errors.New("failed to create app")
 	}
 
@@ -597,7 +597,7 @@ func TestRunNew_Success(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		capturedMaxIterations = cfg.MaxIterationsOverride
 		return mockApp, nil
 	}
@@ -634,7 +634,7 @@ func TestRunNew_AppRunError(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return mockApp, nil
 	}
 
@@ -663,7 +663,7 @@ func TestRunNewWithPrompt_AppFactoryError(t *testing.T) {
 	defer func() { appFactory = originalFactory }()
 
 	// Mock app factory to return an error
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return nil, errors.New("failed to create app")
 	}
 
@@ -692,7 +692,7 @@ func TestRunNewWithPrompt_Success(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		capturedMaxIterations = cfg.MaxIterationsOverride
 		return mockApp, nil
 	}
@@ -721,7 +721,7 @@ func TestRunNewWithPrompt_AppRunError(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return mockApp, nil
 	}
 
@@ -742,7 +742,7 @@ func TestRunResume_AppFactoryError(t *testing.T) {
 	defer func() { appFactory = originalFactory }()
 
 	// Mock app factory to return an error
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return nil, errors.New("failed to create app")
 	}
 
@@ -771,7 +771,7 @@ func TestRunResume_Success(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		capturedMaxIterations = cfg.MaxIterationsOverride
 		return mockApp, nil
 	}
@@ -800,7 +800,7 @@ func TestRunResume_PlanNotFound(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return mockApp, nil
 	}
 
@@ -824,7 +824,7 @@ func TestRunResume_OtherError(t *testing.T) {
 		},
 	}
 
-	appFactory = func(cfg v2.Config) (App, error) {
+	appFactory = func(cfg app.Config) (App, error) {
 		return mockApp, nil
 	}
 

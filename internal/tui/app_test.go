@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -476,6 +477,72 @@ func TestHeader_View(t *testing.T) {
 	}
 	if !strings.Contains(view, "quit") {
 		t.Error("expected 'quit' hint in header")
+	}
+}
+
+func TestHeader_View_SingleLine(t *testing.T) {
+	// Regression test: quit hint should be on the same line as scroll hint
+	h := NewHeader()
+	h.SetIteration(3, 20)
+	h.SetStatus("Running")
+	h.SetWidth(80)
+
+	view := h.View()
+	lines := strings.Split(view, "\n")
+
+	// Header should have exactly 3 lines: top border, content, bottom border
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines (top border, content, bottom border), got %d", len(lines))
+	}
+
+	// The content line (index 1) should contain both the iteration and quit hint
+	contentLine := lines[1]
+	if !strings.Contains(contentLine, "3/20") {
+		t.Errorf("content line should contain iteration, got: %q", contentLine)
+	}
+	if !strings.Contains(contentLine, "quit") {
+		t.Errorf("content line should contain quit hint, got: %q", contentLine)
+	}
+	if !strings.Contains(contentLine, "scroll") {
+		t.Errorf("content line should contain scroll hint, got: %q", contentLine)
+	}
+}
+
+func TestHeader_View_VariousWidths(t *testing.T) {
+	// Test header rendering at various widths to ensure no line wrapping
+	// Minimum width is 60 - below that the content naturally wraps
+	testWidths := []int{60, 80, 100, 120, 160}
+
+	for _, width := range testWidths {
+		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
+			h := NewHeader()
+			h.SetIteration(3, 20)
+			h.SetStatus("Running")
+			h.SetWidth(width)
+
+			view := h.View()
+			lines := strings.Split(view, "\n")
+
+			// Log the actual output for debugging
+			t.Logf("width=%d: Total lines: %d", width, len(lines))
+			for i, line := range lines {
+				t.Logf("[Line %d] %q", i, line)
+			}
+
+			// Header should always have exactly 3 lines
+			if len(lines) != 3 {
+				t.Errorf("width=%d: expected 3 lines, got %d", width, len(lines))
+			}
+
+			// Both hints should be on the content line
+			contentLine := lines[1]
+			if !strings.Contains(contentLine, "quit") {
+				t.Errorf("width=%d: content line missing quit hint", width)
+			}
+			if !strings.Contains(contentLine, "scroll") {
+				t.Errorf("width=%d: content line missing scroll hint", width)
+			}
+		})
 	}
 }
 
@@ -1143,6 +1210,198 @@ func TestModel_View_OverlaysFloatingWindow(t *testing.T) {
 
 	if viewWithFloat == viewWithoutFloat {
 		t.Error("expected view to change when floating window is shown")
+	}
+}
+
+func TestGetToolCategory(t *testing.T) {
+	tests := []struct {
+		toolName string
+		expected ToolCategory
+	}{
+		{"Read", ToolCategoryRead},
+		{"Write", ToolCategoryWrite},
+		{"Edit", ToolCategoryWrite},
+		{"Bash", ToolCategoryBash},
+		{"Grep", ToolCategorySearch},
+		{"Glob", ToolCategorySearch},
+		{"WebSearch", ToolCategorySearch},
+		{"WebFetch", ToolCategorySearch},
+		{"Task", ToolCategoryOther},
+		{"Unknown", ToolCategoryOther},
+		{"", ToolCategoryOther},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.toolName, func(t *testing.T) {
+			result := GetToolCategory(tt.toolName)
+			if result != tt.expected {
+				t.Errorf("GetToolCategory(%q) = %d, expected %d", tt.toolName, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGetToolStyles(t *testing.T) {
+	// Just verify that styles are returned without panic for each category
+	categories := []ToolCategory{
+		ToolCategoryRead,
+		ToolCategoryWrite,
+		ToolCategoryBash,
+		ToolCategorySearch,
+		ToolCategoryOther,
+	}
+
+	for _, cat := range categories {
+		nameStyle, paramStyle := GetToolStyles(cat)
+		// Styles should be non-zero (have some properties set)
+		_ = nameStyle.Render("test")
+		_ = paramStyle.Render("test")
+	}
+}
+
+func TestGetPhaseStyle(t *testing.T) {
+	tests := []string{
+		"running",
+		"Running",
+		"in progress",
+		"developing",
+		"Developing",
+		"reviewing",
+		"Reviewing",
+		"completed",
+		"Completed",
+		"done",
+		"complete",
+		"failed",
+		"error",
+		"max iterations",
+		"unknown",
+		"",
+	}
+
+	for _, phase := range tests {
+		t.Run(phase, func(t *testing.T) {
+			style := GetPhaseStyle(phase)
+			// Should not panic and return a valid style
+			_ = style.Render("test")
+		})
+	}
+}
+
+func TestBuildIterationMarker(t *testing.T) {
+	tests := []struct {
+		name      string
+		iteration int
+		maxIter   int
+		phase     string
+		width     int
+		contains  []string
+	}{
+		{
+			name:      "basic running",
+			iteration: 1,
+			maxIter:   3,
+			phase:     "Running",
+			width:     60,
+			contains:  []string{"Iteration 1/3", "•", "Running", "─"},
+		},
+		{
+			name:      "developing phase",
+			iteration: 2,
+			maxIter:   5,
+			phase:     "Developing",
+			width:     80,
+			contains:  []string{"Iteration 2/5", "•", "Developing"},
+		},
+		{
+			name:      "reviewing phase",
+			iteration: 3,
+			maxIter:   3,
+			phase:     "Reviewing",
+			width:     40,
+			contains:  []string{"Iteration 3/3", "•", "Reviewing"},
+		},
+		{
+			name:      "narrow width",
+			iteration: 1,
+			maxIter:   10,
+			phase:     "Running",
+			width:     30,
+			contains:  []string{"Iteration 1/10", "Running"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildIterationMarker(tt.iteration, tt.maxIter, tt.phase, tt.width)
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("buildIterationMarker(%d, %d, %q, %d) = %q, should contain %q",
+						tt.iteration, tt.maxIter, tt.phase, tt.width, result, want)
+				}
+			}
+		})
+	}
+}
+
+func TestFormatToolUse_Categories(t *testing.T) {
+	// Test that different tool categories produce output with the correct icon and chevron
+	tests := []struct {
+		name     string
+		tool     *claude.ToolUseContent
+		contains []string
+	}{
+		{
+			name: "Read tool",
+			tool: &claude.ToolUseContent{
+				Name:  "Read",
+				Input: []byte(`{"file_path": "/test/path.go"}`),
+			},
+			contains: []string{"▸", "Read", "›", "/test/path.go"},
+		},
+		{
+			name: "Write tool",
+			tool: &claude.ToolUseContent{
+				Name:  "Write",
+				Input: []byte(`{"file_path": "/out.txt"}`),
+			},
+			contains: []string{"▸", "Write", "›", "/out.txt"},
+		},
+		{
+			name: "Bash tool",
+			tool: &claude.ToolUseContent{
+				Name:  "Bash",
+				Input: []byte(`{"command": "ls -la"}`),
+			},
+			contains: []string{"▸", "Bash", "›", "ls -la"},
+		},
+		{
+			name: "Grep tool",
+			tool: &claude.ToolUseContent{
+				Name:  "Grep",
+				Input: []byte(`{"pattern": "func main"}`),
+			},
+			contains: []string{"▸", "Grep", "›", "func main"},
+		},
+		{
+			name: "tool without params",
+			tool: &claude.ToolUseContent{
+				Name:  "SomeTool",
+				Input: []byte(`{}`),
+			},
+			contains: []string{"▸", "SomeTool"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatToolUse(tt.tool)
+			for _, want := range tt.contains {
+				if !strings.Contains(result, want) {
+					t.Errorf("formatToolUse() = %q, should contain %q", result, want)
+				}
+			}
+		})
 	}
 }
 

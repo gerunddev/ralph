@@ -36,9 +36,21 @@ func (p *ScrollablePanel) SetSize(width, height int) {
 	p.width = width
 	p.height = height
 
-	// Account for title line and borders
-	viewportWidth := width - 4
-	viewportHeight := height - 4 // title + borders
+	// Get actual frame size from style (border + padding)
+	style := panelStyle
+	if p.Focused {
+		style = panelFocusedStyle
+	}
+	frameH, frameV := style.GetFrameSize()
+
+	// Title line takes 1 row + newline separator
+	titleHeight := 1
+
+	// Viewport gets remaining space
+	viewportWidth := width - frameH
+	viewportHeight := height - frameV - titleHeight
+
+	// Clamp to minimums
 	if viewportWidth < 10 {
 		viewportWidth = 10
 	}
@@ -171,7 +183,15 @@ func (p *ScrollablePanel) syncViewport() {
 func (p *ScrollablePanel) View() string {
 	// Sync any pending content changes before rendering
 	p.syncViewport()
-	contentWidth := p.width - 2 // Account for border
+
+	// Get frame size dynamically
+	style := panelStyle
+	if p.Focused {
+		style = panelFocusedStyle
+	}
+	frameH, _ := style.GetFrameSize()
+	contentWidth := p.width - frameH
+
 	if contentWidth < 10 {
 		contentWidth = 10
 	}
@@ -202,12 +222,11 @@ func (p *ScrollablePanel) View() string {
 	// Combine
 	content := titleLine + "\n" + viewportContent
 
-	// Apply border style based on focus
-	var style lipgloss.Style
+	// Apply style with MaxHeight as safety cap to prevent overflow
 	if p.Focused {
-		style = panelFocusedStyle.Width(contentWidth)
+		style = panelFocusedStyle.Width(contentWidth).MaxHeight(p.height)
 	} else {
-		style = panelStyle.Width(contentWidth)
+		style = panelStyle.Width(contentWidth).MaxHeight(p.height)
 	}
 
 	return style.Render(content)

@@ -1,4 +1,4 @@
-// Package main is the entry point for the Ralph V2 CLI application.
+// Package main is the entry point for the Ralph CLI application.
 package main
 
 import (
@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	v2 "github.com/gerund/ralph/internal/app/v2"
+	"github.com/gerund/ralph/internal/app"
 	"github.com/gerund/ralph/internal/db"
 	"github.com/gerund/ralph/internal/jj"
 	"github.com/spf13/cobra"
@@ -17,7 +17,7 @@ import (
 // It can be replaced in tests to mock jj validation.
 var jjValidator = defaultJJValidator
 
-// appFactory is the function used to create a new v2.App.
+// appFactory is the function used to create a new app.App.
 // It can be replaced in tests to mock app creation.
 var appFactory = defaultAppFactory
 
@@ -29,11 +29,11 @@ func defaultJJValidator(ctx context.Context, workDir string) error {
 }
 
 // defaultAppFactory is the production app factory implementation.
-func defaultAppFactory(cfg v2.Config) (App, error) {
-	return v2.New(cfg)
+func defaultAppFactory(cfg app.Config) (App, error) {
+	return app.New(cfg)
 }
 
-// App interface defines the methods needed from v2.App for testing.
+// App interface defines the methods needed from app.App for testing.
 type App interface {
 	Run(ctx context.Context, planPath string) error
 	RunWithPrompt(ctx context.Context, prompt string) error
@@ -143,7 +143,7 @@ func runNew(ctx context.Context, planPath string, maxIterations int) error {
 	}
 
 	// Create app
-	app, err := appFactory(v2.Config{
+	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
 	})
 	if err != nil {
@@ -157,7 +157,7 @@ func runNew(ctx context.Context, planPath string, maxIterations int) error {
 // runNewWithPrompt starts execution with a plan from an inline prompt string.
 func runNewWithPrompt(ctx context.Context, prompt string, maxIterations int) error {
 	// Create app
-	app, err := appFactory(v2.Config{
+	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
 	})
 	if err != nil {
@@ -171,7 +171,7 @@ func runNewWithPrompt(ctx context.Context, prompt string, maxIterations int) err
 // runResume continues execution of an existing plan.
 func runResume(ctx context.Context, planID string, maxIterations int) error {
 	// Create app first to access database
-	app, err := appFactory(v2.Config{
+	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
 	})
 	if err != nil {

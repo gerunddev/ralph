@@ -242,7 +242,12 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		m.streamedBytes = 0 // Reset streaming tracker for new iteration
 		m.status = "Running"
 		m.header.SetStatus("Running")
-		iterMarker := iterationMarkerStyle.Render(fmt.Sprintf("━━━ Iteration %d/%d ━━━", event.Iteration, event.MaxIter))
+		// Build marker with current phase and panel width
+		panelWidth := m.feedPanel.viewport.Width
+		if panelWidth < 40 {
+			panelWidth = 40
+		}
+		iterMarker := buildIterationMarker(event.Iteration, event.MaxIter, m.status, panelWidth)
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", iterMarker))
 
 	case loop.EventJJNew:
@@ -379,15 +384,47 @@ func formatToolUse(tool *claude.ToolUseContent) string {
 	// Extract first string param value for context
 	param := extractMainParam(tool.Input)
 
-	// Build styled tool call: ▶ ToolName param
-	icon := toolBracketStyle.Render("▶")
-	name := toolNameStyle.Render(tool.Name)
+	// Get category-specific styles
+	category := GetToolCategory(tool.Name)
+	nameStyle, paramStyle := GetToolStyles(category)
+
+	// Build styled components
+	icon := toolIconStyle.Render("▸")
+	name := nameStyle.Render(tool.Name)
+	chevron := toolChevronStyle.Render("›")
 
 	if param != "" {
-		styledParam := toolParamStyle.Render(param)
-		return fmt.Sprintf("\n%s %s %s", icon, name, styledParam)
+		styledParam := paramStyle.Render(param)
+		return fmt.Sprintf("\n%s %s %s %s", icon, name, chevron, styledParam)
 	}
 	return fmt.Sprintf("\n%s %s", icon, name)
+}
+
+// buildIterationMarker creates a centered iteration marker with phase.
+// Format: ──── Iteration 1/3 • Running ────
+func buildIterationMarker(iteration, maxIter int, phase string, width int) string {
+	// Build the content parts
+	iterText := iterationTextStyle.Render(fmt.Sprintf("Iteration %d/%d", iteration, maxIter))
+	bullet := iterationBulletStyle.Render(" • ")
+	phaseText := GetPhaseStyle(phase).Render(phase)
+
+	content := iterText + bullet + phaseText
+	contentWidth := lipgloss.Width(content)
+
+	// Calculate padding for centering
+	// Total dashes = width - contentWidth - 2 (for spaces around content)
+	totalDashes := width - contentWidth - 2
+	if totalDashes < 8 {
+		totalDashes = 8 // Minimum dashes
+	}
+
+	leftDashes := totalDashes / 2
+	rightDashes := totalDashes - leftDashes
+
+	left := iterationDashStyle.Render(strings.Repeat("─", leftDashes))
+	right := iterationDashStyle.Render(strings.Repeat("─", rightDashes))
+
+	return fmt.Sprintf("%s %s %s", left, content, right)
 }
 
 // extractMainParam extracts the first meaningful string param from tool input JSON.
@@ -418,9 +455,12 @@ func extractMainParam(input json.RawMessage) string {
 func (m *Model) updateLayout() {
 	m.header.SetWidth(m.width)
 
-	// Header: ~2 lines only
-	reservedHeight := 2
-	availableHeight := m.height - reservedHeight
+	// Measure actual header height after rendering
+	headerView := m.header.View()
+	headerHeight := lipgloss.Height(headerView)
+
+	// Feed panel gets remaining height (minus header and newline)
+	availableHeight := m.height - headerHeight - 1
 	if availableHeight < 10 {
 		availableHeight = 10
 	}

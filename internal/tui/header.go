@@ -41,16 +41,16 @@ func (h *Header) SetWidth(w int) {
 
 // View renders the header.
 func (h Header) View() string {
-	// Border takes 2 chars, padding takes 2 chars (1 each side)
-	// But Width() in lipgloss includes padding, so we subtract border only for outer width
-	// and subtract padding for inner content calculation
-	outerWidth := h.width - 2 // Subtract border (1 char each side)
-	if outerWidth < 40 {
-		outerWidth = 40
-	}
-	innerWidth := outerWidth - 2 // Subtract padding (1 char each side)
+	// Get border size (Width() sets width including padding but excluding border)
+	borderH := headerStyle.GetHorizontalBorderSize()
 
-	// Left side: Iteration + Status
+	// styleWidth is what we pass to Width() - includes padding but not border
+	styleWidth := h.width - borderH
+	if styleWidth < 40 {
+		styleWidth = 40
+	}
+
+	// Build content: Iteration | Status: <status> | ↑↓:scroll  q:quit
 	iterStr := "---"
 	if h.MaxIter > 0 {
 		iterStr = fmt.Sprintf("%d/%d", h.Iteration, h.MaxIter)
@@ -64,22 +64,14 @@ func (h Header) View() string {
 	)
 
 	separator := headerLabelStyle.Render("  |  ")
-	leftContent := iterSection + separator + statusSection
 
-	// Right side: Key hints
+	// Key hints inline after status
 	hints := h.renderKeyHints()
 
-	// Calculate spacing to push hints to the right
-	leftWidth := lipgloss.Width(leftContent)
-	hintsWidth := lipgloss.Width(hints)
-	spacing := innerWidth - leftWidth - hintsWidth
-	if spacing < 1 {
-		spacing = 1
-	}
+	content := iterSection + separator + statusSection + separator + hints
 
-	content := leftContent + strings.Repeat(" ", spacing) + hints
-
-	style := headerStyle.Width(outerWidth)
+	// Apply style with explicit width and safety cap
+	style := headerStyle.Width(styleWidth).MaxHeight(3)
 	return style.Render(content)
 }
 

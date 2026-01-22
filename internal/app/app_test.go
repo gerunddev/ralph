@@ -1,4 +1,4 @@
-package v2
+package app
 
 import (
 	"context"
@@ -15,7 +15,7 @@ import (
 
 func TestNew(t *testing.T) {
 	// Create a temp directory
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNew_WithMaxIterationsOverride(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestNew_WithMaxIterationsOverride(t *testing.T) {
 }
 
 func TestApp_SetClaudeClient(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestApp_SetClaudeClient(t *testing.T) {
 }
 
 func TestApp_SetDistiller(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestApp_SetDistiller(t *testing.T) {
 }
 
 func TestApp_SetJJClient(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestApp_SetJJClient(t *testing.T) {
 }
 
 func TestApp_PlanID_BeforeRun(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestApp_PlanID_BeforeRun(t *testing.T) {
 }
 
 func TestApp_Run_PlanFileNotFound(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestApp_Run_PlanFileNotFound(t *testing.T) {
 }
 
 func TestApp_Resume_PlanNotFound(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestResult_Structure(t *testing.T) {
 
 // TestApp_InitDependencies_CreatesDatabase verifies that initDependencies creates the database.
 func TestApp_InitDependencies_CreatesDatabase(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestApp_InitDependencies_CreatesDatabase(t *testing.T) {
 
 // TestApp_InitDependencies_UsesOverrides verifies that overrides are used when set.
 func TestApp_InitDependencies_UsesOverrides(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestApp_InitDependencies_UsesOverrides(t *testing.T) {
 
 // TestApp_RunHeadless_FileNotFound tests RunHeadless with a non-existent plan file.
 func TestApp_RunHeadless_FileNotFound(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestApp_RunHeadless_FileNotFound(t *testing.T) {
 
 // TestApp_ResumeHeadless_PlanNotFound tests resuming a non-existent plan.
 func TestApp_ResumeHeadless_PlanNotFound(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestApp_ResumeHeadless_PlanNotFound(t *testing.T) {
 
 // TestApp_PlanCreation verifies that a plan is created correctly.
 func TestApp_PlanCreation(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestApp_PlanCreation(t *testing.T) {
 
 // TestApp_CreatePlanFromFile tests the createPlanFromFile method directly.
 func TestApp_CreatePlanFromFile(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestApp_CreatePlanFromFile(t *testing.T) {
 
 // TestApp_ContextCancellation verifies that context cancellation is handled.
 func TestApp_ContextCancellation(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-v2-app-test-*")
+	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}

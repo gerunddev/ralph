@@ -49,9 +49,15 @@ func (f *FloatingWindow) SetSize(width, height int) {
 		windowHeight = 30
 	}
 
-	// Viewport is inside the window (account for border and title)
-	f.viewport.Width = windowWidth - 4
-	f.viewport.Height = windowHeight - 4
+	// Get frame size from style
+	frameH, frameV := floatingWindowStyle.GetFrameSize()
+
+	// Title takes 1 line
+	titleHeight := 1
+
+	// Viewport is inside the window
+	f.viewport.Width = windowWidth - frameH
+	f.viewport.Height = windowHeight - frameV - titleHeight
 }
 
 // Show displays the floating window with the given content.
@@ -106,7 +112,9 @@ func (f FloatingWindow) View() string {
 		windowHeight = 30
 	}
 
-	contentWidth := windowWidth - 4
+	// Get frame size dynamically
+	frameH, _ := floatingWindowStyle.GetFrameSize()
+	contentWidth := windowWidth - frameH
 
 	// Title line
 	title := floatingTitleStyle.Render(f.Title)
@@ -131,8 +139,8 @@ func (f FloatingWindow) View() string {
 	// Combine title and viewport
 	content := titleLine + "\n" + viewportContent
 
-	// Apply floating window style
-	windowStyle := floatingWindowStyle.Width(contentWidth)
+	// Apply style with safety cap
+	windowStyle := floatingWindowStyle.Width(contentWidth).MaxHeight(windowHeight)
 	window := windowStyle.Render(content)
 
 	// Calculate centering offsets

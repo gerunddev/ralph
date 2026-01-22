@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gerund/ralph/internal/claude"
-	"github.com/gerund/ralph/internal/parser"
 )
 
 // DefaultModel is the default model to use for distillation.
@@ -18,17 +17,17 @@ const DefaultModel = "haiku"
 const FallbackMessage = "wip: work in progress"
 
 // distillationPrompt is the prompt template for commit message generation.
-const distillationPrompt = `You are a commit message writer. Given the following development session and code diff, write a concise git commit message.
+const distillationPrompt = `You are a commit message writer. Given the following code diff, write a descriptive git commit message.
 
 Rules:
-- Use conventional commit format (feat:, fix:, refactor:, chore:, docs:, test:)
+- Use conventional commit format: type(scope): description
+  - Types: feat, fix, refactor, chore, docs, test, perf, style
+  - Scope: the module, file, or component affected (e.g., loop, distill, jj, tui)
 - Keep the first line under 72 characters
-- Be specific about what changed based on the DIFF, not the session output
-- Focus on the "what" and "why", not the "how"
+- Be specific and descriptive about what changed in the diff
+- Include WHY the change was made if it can be inferred from the diff context
+- Focus on the meaningful changes, not trivial ones
 - Do not mention AI, Claude, automation, or robots
-
-Session context:
-%s
 
 Code diff:
 %s
@@ -58,24 +57,18 @@ func NewDistillerWithDefaults() *Distiller {
 	return NewDistiller(client)
 }
 
-// Distill takes session output and diff, returns a concise commit message.
+// Distill takes a diff and returns a descriptive commit message.
 // It handles special cases:
-// - Empty output returns a generic message
-// - "DONE DONE DONE!!!" returns "Complete implementation"
+// - Empty diff returns a generic message
 // - Errors return a fallback message
-func (d *Distiller) Distill(ctx context.Context, sessionOutput string, diff string) (string, error) {
-	// Handle empty output and empty diff
-	if strings.TrimSpace(sessionOutput) == "" && strings.TrimSpace(diff) == "" {
+func (d *Distiller) Distill(ctx context.Context, diff string) (string, error) {
+	// Handle empty diff
+	if strings.TrimSpace(diff) == "" {
 		return FallbackMessage, nil
 	}
 
-	// Handle the "done" marker specially - use contains logic to match parser behavior
-	if containsDoneMarker(sessionOutput) {
-		return "Complete implementation", nil
-	}
-
 	// Build the prompt
-	prompt := fmt.Sprintf(distillationPrompt, sessionOutput, diff)
+	prompt := fmt.Sprintf(distillationPrompt, diff)
 
 	// Run Claude session
 	session, err := d.client.Run(ctx, prompt)
@@ -131,18 +124,3 @@ func cleanMessage(msg string) string {
 	return ""
 }
 
-// containsDoneMarker checks if the input contains the done marker.
-// The marker must not be followed by additional '!' characters to avoid
-// false positives like "DONE DONE DONE!!!!" being matched.
-func containsDoneMarker(s string) bool {
-	idx := strings.Index(s, parser.DoneMarker)
-	if idx == -1 {
-		return false
-	}
-	// Ensure marker isn't followed by another '!'
-	afterIdx := idx + len(parser.DoneMarker)
-	if afterIdx < len(s) && s[afterIdx] == '!' {
-		return false
-	}
-	return true
-}

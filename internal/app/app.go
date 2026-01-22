@@ -1,6 +1,6 @@
-// Package v2 provides the application orchestration for Ralph.
+// Package app provides the application orchestration for Ralph.
 // It connects the main execution loop to the TUI, handling the full lifecycle.
-package v2
+package app
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"github.com/gerund/ralph/internal/jj"
 	"github.com/gerund/ralph/internal/log"
 	"github.com/gerund/ralph/internal/loop"
-	tui "github.com/gerund/ralph/internal/tui/v2"
+	"github.com/gerund/ralph/internal/tui"
 )
 
 // App orchestrates the main execution loop and TUI.

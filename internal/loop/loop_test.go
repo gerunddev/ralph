@@ -1754,7 +1754,11 @@ func mockJJRunnerWithDiff(baseChangeID, diffContent string) jj.CommandRunner {
 					return diffContent, "", nil
 				}
 			}
-			// Default diff (used by IsEmpty check) - return empty so no jj new is called
+			// Plain jj diff (no args) - used by distillAndCommit to get current change diff
+			// Return the diff content to trigger distillation
+			if len(args) == 1 {
+				return diffContent, "", nil
+			}
 			return "", "", nil
 		}
 		if len(args) >= 1 && args[0] == "show" {

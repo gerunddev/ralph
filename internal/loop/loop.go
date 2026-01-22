@@ -224,24 +224,26 @@ func (l *Loop) Run(ctx context.Context) error {
 }
 
 // distillAndCommit distills a commit message and runs jj commit.
-// If there are no changes to commit, this is a no-op.
-func (l *Loop) distillAndCommit(ctx context.Context, sessionID, output string) {
-	// Get the diff for context
-	diff, err := l.deps.JJ.Show(ctx)
+// If there are no changes in the current working copy, this is a no-op.
+// Uses jj diff (not jj show) to get only the current change's modifications.
+func (l *Loop) distillAndCommit(ctx context.Context, sessionID string) {
+	// Get the diff for the current change only (not cumulative)
+	// jj diff shows changes in the working copy vs its parent
+	diff, err := l.deps.JJ.Diff(ctx, "", "")
 	if err != nil {
 		log.Warn("failed to get diff for distillation", "error", err)
-		diff = "" // Continue without diff
+		return // Can't commit without knowing what changed
 	}
 
-	// Skip commit if there are no changes
+	// Skip commit if there are no changes in the current change
 	if strings.TrimSpace(diff) == "" {
-		log.Debug("no changes to commit, skipping distillAndCommit")
+		log.Debug("no changes in current change, skipping distillAndCommit")
 		return
 	}
 
 	l.emit(NewEvent(EventDistilling, l.iteration, l.cfg.MaxIterations, "Distilling commit message"))
 
-	commitMsg, err := l.deps.Distiller.Distill(ctx, output, diff)
+	commitMsg, err := l.deps.Distiller.Distill(ctx, diff)
 	if err != nil {
 		log.Warn("distillation failed, using fallback", "error", err)
 		// commitMsg already contains fallback from Distill
@@ -312,7 +314,7 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Info("ignoring DEV_DONE because session contained file edits",
 				"iteration", l.iteration)
 		}
-		l.distillAndCommit(ctx, devSessionID, devOutput)
+		l.distillAndCommit(ctx, devSessionID)
 		l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
 			fmt.Sprintf("Developer iteration %d complete, continuing", l.iteration)))
 		return false, nil
@@ -397,7 +399,7 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Warn("failed to mark plan complete", "error", err)
 		}
 
-		l.distillAndCommit(ctx, reviewSessionID, reviewOutput)
+		l.distillAndCommit(ctx, reviewSessionID)
 		return true, nil
 	}
 
@@ -409,7 +411,7 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 		log.Warn("failed to store reviewer feedback", "error", err)
 	}
 
-	l.distillAndCommit(ctx, reviewSessionID, reviewOutput)
+	l.distillAndCommit(ctx, reviewSessionID)
 
 	l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
 		fmt.Sprintf("iteration %d complete with reviewer feedback", l.iteration)))
