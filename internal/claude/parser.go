@@ -35,6 +35,38 @@ func parseCountOrArray(data json.RawMessage) int {
 	return 0
 }
 
+// parseError handles the error field which can be either a string or ErrorContent object.
+// This provides flexible parsing for Claude CLI error events which may return errors
+// in different formats.
+func parseError(data json.RawMessage) *ErrorContent {
+	if len(data) == 0 {
+		return nil
+	}
+
+	// Handle JSON null
+	if string(data) == "null" {
+		return nil
+	}
+
+	// Try parsing as ErrorContent object first (more specific)
+	var ec ErrorContent
+	if err := json.Unmarshal(data, &ec); err == nil && ec.Message != "" {
+		return &ec
+	}
+
+	// Try parsing as plain string
+	var errStr string
+	if err := json.Unmarshal(data, &errStr); err == nil {
+		if errStr == "" {
+			return nil
+		}
+		return &ErrorContent{Message: errStr}
+	}
+
+	// Unknown format - return raw string as message (graceful degradation)
+	return &ErrorContent{Message: string(data)}
+}
+
 // NewParser creates a new stream-JSON parser.
 func NewParser(r io.Reader) *Parser {
 	scanner := bufio.NewScanner(r)
@@ -132,10 +164,10 @@ func (p *Parser) parseLine(line []byte) (*StreamEvent, error) {
 			SubAgent:    raw.SubAgent,
 		}
 
-	case raw.Type == "error" || raw.Error != nil:
+	case raw.Type == "error" || len(raw.Error) > 0:
 		event.Type = EventError
-		if raw.Error != nil {
-			event.Error = raw.Error
+		if len(raw.Error) > 0 {
+			event.Error = parseError(raw.Error)
 		} else {
 			event.Error = &ErrorContent{
 				Message: "unknown error",

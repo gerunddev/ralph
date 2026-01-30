@@ -172,8 +172,8 @@ type rawEvent struct {
 	Result      string  `json:"result"`
 	SubAgent    bool    `json:"is_sub_agent"`
 
-	// Error event fields
-	Error *ErrorContent `json:"error"`
+	// Error event fields - can be string or ErrorContent object
+	Error json.RawMessage `json:"error"`
 
 	// System event fields
 	SubType string `json:"subtype"`

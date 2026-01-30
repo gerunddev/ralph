@@ -227,7 +227,8 @@ func TestParser_ResultEvent(t *testing.T) {
 // Parser Tests - Error Event
 // =============================================================================
 
-func TestParser_ErrorEvent(t *testing.T) {
+func TestParser_ErrorEvent_ObjectFormat(t *testing.T) {
+	// Existing format - error as an object with code and message
 	input := `{"type":"error","error":{"code":"rate_limit","message":"Rate limit exceeded"}}`
 
 	parser := NewParser(strings.NewReader(input))
@@ -249,6 +250,153 @@ func TestParser_ErrorEvent(t *testing.T) {
 	}
 	if event.Error.Message != "Rate limit exceeded" {
 		t.Errorf("Error.Message = %q, want %q", event.Error.Message, "Rate limit exceeded")
+	}
+}
+
+func TestParser_ErrorEvent_StringFormat(t *testing.T) {
+	// New format - error as a plain string (the bug this fixes)
+	input := `{"type":"error","error":"Connection timeout"}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventError {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventError)
+	}
+
+	if event.Error == nil {
+		t.Fatal("event.Error is nil")
+	}
+
+	if event.Error.Message != "Connection timeout" {
+		t.Errorf("Error.Message = %q, want %q", event.Error.Message, "Connection timeout")
+	}
+	// Code should be empty for string format errors
+	if event.Error.Code != "" {
+		t.Errorf("Error.Code = %q, want empty string", event.Error.Code)
+	}
+}
+
+func TestParser_ErrorEvent_TypeOnly(t *testing.T) {
+	// Error event with type but no error field
+	input := `{"type":"error"}`
+
+	parser := NewParser(strings.NewReader(input))
+	event, err := parser.Next()
+	if err != nil {
+		t.Fatalf("Next() returned error: %v", err)
+	}
+
+	if event.Type != EventError {
+		t.Errorf("event.Type = %v, want %v", event.Type, EventError)
+	}
+
+	if event.Error == nil {
+		t.Fatal("event.Error is nil")
+	}
+
+	if event.Error.Message != "unknown error" {
+		t.Errorf("Error.Message = %q, want %q", event.Error.Message, "unknown error")
+	}
+}
+
+// =============================================================================
+// parseError Helper Tests
+// =============================================================================
+
+func TestParseError_ObjectFormat(t *testing.T) {
+	data := []byte(`{"code":"rate_limit","message":"Rate limit exceeded"}`)
+
+	result := parseError(data)
+
+	if result == nil {
+		t.Fatal("parseError returned nil")
+	}
+	if result.Code != "rate_limit" {
+		t.Errorf("Code = %q, want %q", result.Code, "rate_limit")
+	}
+	if result.Message != "Rate limit exceeded" {
+		t.Errorf("Message = %q, want %q", result.Message, "Rate limit exceeded")
+	}
+}
+
+func TestParseError_StringFormat(t *testing.T) {
+	data := []byte(`"Connection failed"`)
+
+	result := parseError(data)
+
+	if result == nil {
+		t.Fatal("parseError returned nil")
+	}
+	if result.Code != "" {
+		t.Errorf("Code = %q, want empty string", result.Code)
+	}
+	if result.Message != "Connection failed" {
+		t.Errorf("Message = %q, want %q", result.Message, "Connection failed")
+	}
+}
+
+func TestParseError_EmptyInput(t *testing.T) {
+	// Test nil/empty data
+	if result := parseError(nil); result != nil {
+		t.Errorf("parseError(nil) = %v, want nil", result)
+	}
+
+	if result := parseError([]byte{}); result != nil {
+		t.Errorf("parseError([]byte{}) = %v, want nil", result)
+	}
+}
+
+func TestParseError_NullInput(t *testing.T) {
+	data := []byte(`null`)
+
+	result := parseError(data)
+
+	if result != nil {
+		t.Errorf("parseError(null) = %v, want nil", result)
+	}
+}
+
+func TestParseError_EmptyString(t *testing.T) {
+	data := []byte(`""`)
+
+	result := parseError(data)
+
+	if result != nil {
+		t.Errorf("parseError empty string = %v, want nil", result)
+	}
+}
+
+func TestParseError_UnexpectedFormat(t *testing.T) {
+	// Unexpected format - should degrade gracefully
+	data := []byte(`123`)
+
+	result := parseError(data)
+
+	if result == nil {
+		t.Fatal("parseError returned nil for unexpected format")
+	}
+	// Should contain the raw value as message
+	if result.Message != "123" {
+		t.Errorf("Message = %q, want %q", result.Message, "123")
+	}
+}
+
+func TestParseError_ObjectWithoutMessage(t *testing.T) {
+	// Object that doesn't have a message field - should try string fallback
+	data := []byte(`{"unexpected":"format"}`)
+
+	result := parseError(data)
+
+	if result == nil {
+		t.Fatal("parseError returned nil")
+	}
+	// Should fall through to raw message since Message is empty
+	if result.Message == "" {
+		t.Error("Message should not be empty")
 	}
 }
 
