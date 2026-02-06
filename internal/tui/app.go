@@ -250,9 +250,6 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		iterMarker := buildIterationMarker(event.Iteration, event.MaxIter, m.status, panelWidth)
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", iterMarker))
 
-	case loop.EventJJNew:
-		m.feedPanel.AppendLine(systemMessageStyle.Render("Creating new jj change..."))
-
 	case loop.EventPromptBuilt:
 		promptHeader := sectionDividerStyle.Render("─── Prompt ───")
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", promptHeader))
@@ -286,13 +283,6 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 
 	case loop.EventParsed:
 		// No-op
-
-	case loop.EventDistilling:
-		m.feedPanel.AppendLine(systemMessageStyle.Render("Distilling commit message..."))
-
-	case loop.EventJJCommit:
-		commitMsg := systemMessageStyle.Render(fmt.Sprintf("Committing: %s", event.Message))
-		m.feedPanel.AppendLine(commitMsg)
 
 	case loop.EventIterationEnd:
 		m.feedPanel.AppendLine(systemMessageStyle.Render("Iteration complete"))

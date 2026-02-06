@@ -16,7 +16,6 @@ import (
 	"github.com/gerunddev/ralph/internal/claude"
 	"github.com/gerunddev/ralph/internal/config"
 	"github.com/gerunddev/ralph/internal/db"
-	"github.com/gerunddev/ralph/internal/distill"
 	"github.com/gerunddev/ralph/internal/jj"
 	"github.com/gerunddev/ralph/internal/log"
 	"github.com/gerunddev/ralph/internal/loop"
@@ -29,7 +28,6 @@ type App struct {
 	appCfg  Config // App-level config (extreme mode, etc.)
 	db      *db.DB
 	claude  *claude.Client
-	distill *distill.Distiller
 	jj      *jj.Client
 	workDir string
 
@@ -40,9 +38,8 @@ type App struct {
 	loop *loop.Loop
 
 	// For testing: allow injecting mock dependencies
-	claudeOverride  *claude.Client
-	distillOverride *distill.Distiller
-	jjOverride      *jj.Client
+	claudeOverride *claude.Client
+	jjOverride     *jj.Client
 }
 
 // Config holds configuration for creating a new App.
@@ -165,13 +162,6 @@ func (a *App) initDependencies() error {
 		})
 	}
 
-	// Create distiller (use override if set, for testing)
-	if a.distillOverride != nil {
-		a.distill = a.distillOverride
-	} else {
-		a.distill = distill.NewDistillerWithDefaults()
-	}
-
 	// Create jj client (use override if set, for testing)
 	if a.jjOverride != nil {
 		a.jj = a.jjOverride
@@ -254,10 +244,9 @@ func (a *App) createLoop() {
 		ExtremeMode:   a.appCfg.ExtremeMode,
 		WorkDir:       a.workDir,
 	}, loop.Deps{
-		DB:        a.db,
-		Claude:    a.claude,
-		Distiller: a.distill,
-		JJ:        a.jj,
+		DB:     a.db,
+		Claude: a.claude,
+		JJ:     a.jj,
 	})
 }
 
@@ -359,11 +348,6 @@ func (a *App) runLoop(ctx context.Context) error {
 // SetClaudeClient allows injecting a mock Claude client for testing.
 func (a *App) SetClaudeClient(client *claude.Client) {
 	a.claudeOverride = client
-}
-
-// SetDistiller allows injecting a mock distiller for testing.
-func (a *App) SetDistiller(d *distill.Distiller) {
-	a.distillOverride = d
 }
 
 // SetJJClient allows injecting a mock jj client for testing.

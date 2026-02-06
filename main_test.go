@@ -45,7 +45,6 @@ func createTestCommand() (*cobra.Command, *testFlags) {
 		Short: "Iterative AI development with a single agent loop",
 		Long: `Ralph runs an AI agent iteratively against a plan file.
 The agent works until it declares completion or hits max iterations.
-Each iteration creates a jj commit with the changes.
 
 Examples:
   ralph plan.md                    # Start new execution from plan file

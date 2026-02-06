@@ -13,7 +13,6 @@ import (
 	"github.com/gerunddev/ralph/internal/agent"
 	"github.com/gerunddev/ralph/internal/claude"
 	"github.com/gerunddev/ralph/internal/db"
-	"github.com/gerunddev/ralph/internal/distill"
 	"github.com/gerunddev/ralph/internal/jj"
 	"github.com/gerunddev/ralph/internal/log"
 	"github.com/gerunddev/ralph/internal/parser"
@@ -76,10 +75,9 @@ type Config struct {
 
 // Deps holds dependencies for the loop.
 type Deps struct {
-	DB        *db.DB
-	Claude    *claude.Client // Main model for development
-	Distiller *distill.Distiller
-	JJ        *jj.Client
+	DB     *db.DB
+	Claude *claude.Client // Main model for development
+	JJ     *jj.Client
 }
 
 // Loop orchestrates the main execution loop for Ralph.
@@ -250,42 +248,6 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
-// distillAndCommit distills a commit message and runs jj commit.
-// If there are no changes in the current working copy, this is a no-op.
-// Uses jj diff (not jj show) to get only the current change's modifications.
-func (l *Loop) distillAndCommit(ctx context.Context, sessionID string) {
-	// Get the diff for the current change only (not cumulative)
-	// jj diff shows changes in the working copy vs its parent
-	diff, err := l.deps.JJ.Diff(ctx, "", "")
-	if err != nil {
-		log.Warn("failed to get diff for distillation", "error", err)
-		return // Can't commit without knowing what changed
-	}
-
-	// Skip commit if there are no changes in the current change
-	if strings.TrimSpace(diff) == "" {
-		log.Debug("no changes in current change, skipping distillAndCommit")
-		return
-	}
-
-	l.emit(NewEvent(EventDistilling, l.iteration, l.effectiveMaxIter(), "Distilling commit message"))
-
-	commitMsg, err := l.deps.Distiller.Distill(ctx, diff)
-	if err != nil {
-		log.Warn("distillation failed, using fallback", "error", err)
-		// commitMsg already contains fallback from Distill
-	}
-
-	l.emit(NewEvent(EventJJCommit, l.iteration, l.effectiveMaxIter(),
-		fmt.Sprintf("Committing: %s", commitMsg)))
-
-	if err := l.deps.JJ.Commit(ctx, commitMsg); err != nil {
-		log.Warn("jj commit failed", "error", err)
-		l.emit(NewErrorEvent(l.iteration, l.effectiveMaxIter(),
-			fmt.Errorf("jj commit failed: %w", err)))
-	}
-}
-
 // emit sends an event to the events channel if it's not full.
 func (l *Loop) emit(event Event) {
 	l.eventsMu.Lock()
@@ -341,7 +303,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Info("ignoring DEV_DONE because session contained file edits",
 				"iteration", l.iteration)
 		}
-		l.distillAndCommit(ctx, devSessionID)
 		l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
 			fmt.Sprintf("Developer iteration %d complete, continuing", l.iteration)))
 		return false, nil
@@ -422,7 +383,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 		l.emit(NewEvent(EventBothDone, l.iteration, l.effectiveMaxIter(),
 			"Both developer and reviewer approved"))
 
-		l.distillAndCommit(ctx, reviewSessionID)
 		return true, nil
 	}
 
@@ -433,8 +393,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	if err := l.storeReviewerFeedback(reviewSessionID, reviewResult.ReviewerFeedback); err != nil {
 		log.Warn("failed to store reviewer feedback", "error", err)
 	}
-
-	l.distillAndCommit(ctx, reviewSessionID)
 
 	l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
 		fmt.Sprintf("iteration %d complete with reviewer feedback", l.iteration)))
@@ -485,22 +443,6 @@ func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback s
 	}
 
 	l.emit(NewPromptBuiltEvent(l.iteration, l.effectiveMaxIter(), prompt))
-
-	// Run jj new only if current change has content
-	isEmpty, err := l.deps.JJ.IsEmpty(ctx)
-	if err != nil {
-		log.Warn("failed to check if change is empty", "error", err)
-		isEmpty = false
-	}
-
-	if !isEmpty {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.effectiveMaxIter(), "Creating new jj change"))
-		if err := l.deps.JJ.New(ctx); err != nil {
-			log.Warn("jj new failed", "error", err)
-		}
-	} else {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.effectiveMaxIter(), "Skipping jj new (current change is empty)"))
-	}
 
 	// Create session in DB
 	sessionID = uuid.New().String()

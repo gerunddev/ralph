@@ -26,8 +26,6 @@ This project uses Jujutsu (jj) for version control, NOT git. Even if there is a 
 - Use ` + "`jj show`" + ` instead of ` + "`git show`" + `
 - Use ` + "`jj log`" + ` instead of ` + "`git log`" + `
 - Use ` + "`jj status`" + ` instead of ` + "`git status`" + `
-- Use ` + "`jj new`" + ` instead of ` + "`git commit`" + `
-- Use ` + "`jj describe`" + ` to set commit messages
 
 ## Your Capabilities
 - Critically evaluate your own code; don't stop until you're confident it's right
@@ -147,8 +145,6 @@ This project uses Jujutsu (jj) for version control, NOT git. Even if there is a 
 - Use ` + "`jj show`" + ` instead of ` + "`git show`" + `
 - Use ` + "`jj log`" + ` instead of ` + "`git log`" + `
 - Use ` + "`jj status`" + ` instead of ` + "`git status`" + `
-- Use ` + "`jj new`" + ` instead of ` + "`git commit`" + `
-- Use ` + "`jj describe`" + ` to set commit messages
 
 ## Your Capabilities
 - Critically evaluate your own code; don't stop until you're confident it's right

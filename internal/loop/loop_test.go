@@ -13,7 +13,6 @@ import (
 
 	"github.com/gerunddev/ralph/internal/claude"
 	"github.com/gerunddev/ralph/internal/db"
-	"github.com/gerunddev/ralph/internal/distill"
 	"github.com/gerunddev/ralph/internal/jj"
 )
 
@@ -95,37 +94,26 @@ func createMockClaudeOutput(text string) string {
 }
 
 // mockJJRunner creates a jj command runner that handles common commands.
-// It returns non-empty diff (so IsEmpty returns false), and a sample diff for show.
+// It returns non-empty diff and a sample diff for show.
 func mockJJRunner() jj.CommandRunner {
 	return func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
 		if len(args) >= 1 && args[0] == "diff" {
-			// Return non-empty diff so jj new is called
 			return "diff --git a/file.go b/file.go\n+// new code", "", nil
 		}
 		if len(args) >= 1 && args[0] == "show" {
-			// Return a sample diff for distillation
 			return "diff --git a/file.go b/file.go\n+// new code", "", nil
 		}
 		return "", "", nil
 	}
 }
 
-// mockJJRunnerEmpty creates a jj command runner where IsEmpty returns true.
+// mockJJRunnerEmpty creates a jj command runner that returns empty output for all commands.
 func mockJJRunnerEmpty() jj.CommandRunner {
 	return func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
 		if len(args) >= 1 && args[0] == "show" {
 			return "", "", nil
 		}
 		return "", "", nil
-	}
-}
-
-// mockDistillerCreator creates a command creator for distillation that returns a fixed message.
-func mockDistillerCreator(msg string) claude.CommandCreator {
-	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		// Create a simple output that will be parsed as the commit message
-		output := createMockClaudeOutput(msg)
-		return exec.CommandContext(ctx, "echo", output)
 	}
 }
 
@@ -140,14 +128,6 @@ func TestLoopBasicIteration(t *testing.T) {
 	})
 	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nDid some work\n\n## Learnings\nLearned something"))
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{
-		Model:    "haiku",
-		MaxTurns: 1,
-	})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test: update implementation"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -158,10 +138,9 @@ func TestLoopBasicIteration(t *testing.T) {
 		MaxIterations: 1,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -252,14 +231,6 @@ func TestLoopDoneMarker(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{
-		Model:    "haiku",
-		MaxTurns: 1,
-	})
-	distillerClient.SetCommandCreator(mockDistillerCreator("Complete implementation"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client (empty so DEV_DONE is accepted)
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -270,10 +241,9 @@ func TestLoopDoneMarker(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -341,11 +311,6 @@ func TestLoopContextCancellation(t *testing.T) {
 		return exec.CommandContext(ctx, "sleep", "10")
 	})
 
-	// Create mock distiller (won't be reached)
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -356,10 +321,9 @@ func TestLoopContextCancellation(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with very short timeout
@@ -428,11 +392,6 @@ func TestLoopResume(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("Complete"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client (empty so DEV_DONE is accepted)
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -443,10 +402,9 @@ func TestLoopResume(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run
@@ -494,12 +452,7 @@ func TestLoopEventTypes(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
-	// Create mock jj client with diff so distilling phase runs and emits EventDistilling
+	// Create mock jj client with diff
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerWithDiff("basechange123", "+func test() {}"))
 
@@ -509,10 +462,9 @@ func TestLoopEventTypes(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run
@@ -552,7 +504,6 @@ func TestLoopEventTypes(t *testing.T) {
 		EventReviewerEnd:      false,
 		EventReviewerApproved: false,
 		EventBothDone:         false,
-		EventDistilling:       false,
 		EventDone:             false,
 	}
 
@@ -566,183 +517,6 @@ func TestLoopEventTypes(t *testing.T) {
 		if !found {
 			t.Errorf("expected event type %s was not emitted", eventType)
 		}
-	}
-}
-
-func TestLoopSkipsJJNewWhenEmpty(t *testing.T) {
-	database := setupTestDB(t)
-	plan := createTestPlan(t, database, "Test plan content")
-
-	// Track calls to differentiate developer vs reviewer
-	callCount := 0
-
-	// Create mock Claude client with DEV_DONE + REVIEWER_APPROVED sequence
-	claudeClient := claude.NewClient(claude.ClientConfig{
-		Model:    "test",
-		MaxTurns: 1,
-	})
-	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		callCount++
-		var output string
-		if callCount == 1 {
-			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
-		} else {
-			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
-		}
-		jsonOutput := createMockClaudeOutput(output)
-		return exec.CommandContext(ctx, "echo", jsonOutput)
-	})
-
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
-	// Create mock jj client that returns empty diff (IsEmpty = true)
-	jjClient := jj.NewClient("/tmp")
-	var jjNewCalled bool
-	jjClient.SetCommandRunner(func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
-		if len(args) >= 1 && args[0] == "new" {
-			jjNewCalled = true
-		}
-		// Return empty diff so IsEmpty returns true
-		return "", "", nil
-	})
-
-	// Create loop
-	loop := New(Config{
-		PlanID:        plan.ID,
-		MaxIterations: 1,
-		WorkDir:       "/tmp",
-	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
-	})
-
-	// Run
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Collect events
-	var events []Event
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for event := range loop.Events() {
-			events = append(events, event)
-		}
-	}()
-
-	err := loop.Run(ctx)
-	if err != nil {
-		t.Fatalf("loop.Run() error: %v", err)
-	}
-
-	wg.Wait()
-
-	// jj new should NOT have been called because diff was empty
-	if jjNewCalled {
-		t.Error("jj new was called when change was empty - should have been skipped")
-	}
-
-	// Verify we got the "skipping" event message
-	var foundSkipMessage bool
-	for _, e := range events {
-		if e.Type == EventJJNew && strings.Contains(e.Message, "Skipping") {
-			foundSkipMessage = true
-			break
-		}
-	}
-	if !foundSkipMessage {
-		t.Error("expected EventJJNew with 'Skipping' message when change is empty")
-	}
-}
-
-func TestLoopCallsJJNewWhenNotEmpty(t *testing.T) {
-	database := setupTestDB(t)
-	plan := createTestPlan(t, database, "Test plan content")
-
-	// Create mock Claude client (developer output - no DEV_DONE since we just want one iteration)
-	claudeClient := claude.NewClient(claude.ClientConfig{
-		Model:    "test",
-		MaxTurns: 1,
-	})
-	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nWorking\n\n## Status\nRUNNING RUNNING RUNNING"))
-
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
-	// Create mock jj client that returns non-empty diff
-	jjClient := jj.NewClient("/tmp")
-	var jjNewCalled bool
-	jjClient.SetCommandRunner(func(ctx context.Context, dir string, name string, args ...string) (string, string, error) {
-		if len(args) >= 1 && args[0] == "new" {
-			jjNewCalled = true
-		}
-		if len(args) >= 1 && args[0] == "diff" {
-			// Return non-empty diff
-			return "diff --git a/file.go b/file.go\n+// new code", "", nil
-		}
-		if len(args) >= 1 && args[0] == "show" {
-			return "diff --git a/file.go b/file.go", "", nil
-		}
-		return "", "", nil
-	})
-
-	// Create loop
-	loop := New(Config{
-		PlanID:        plan.ID,
-		MaxIterations: 1,
-		WorkDir:       "/tmp",
-	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
-	})
-
-	// Run
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Collect events
-	var events []Event
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for event := range loop.Events() {
-			events = append(events, event)
-		}
-	}()
-
-	err := loop.Run(ctx)
-	if err != nil {
-		t.Fatalf("loop.Run() error: %v", err)
-	}
-
-	wg.Wait()
-
-	// jj new SHOULD have been called because diff was not empty
-	if !jjNewCalled {
-		t.Error("jj new was NOT called when change was not empty - should have been called")
-	}
-
-	// Verify we got the "Creating" event message (not "Skipping")
-	var foundCreateMessage bool
-	for _, e := range events {
-		if e.Type == EventJJNew && strings.Contains(e.Message, "Creating") {
-			foundCreateMessage = true
-			break
-		}
-	}
-	if !foundCreateMessage {
-		t.Error("expected EventJJNew with 'Creating' message when change is not empty")
 	}
 }
 
@@ -922,14 +696,6 @@ func TestLoopDoneMarkerIgnoredWithEdits(t *testing.T) {
 		"Edit",
 	))
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{
-		Model:    "haiku",
-		MaxTurns: 1,
-	})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -941,10 +707,9 @@ func TestLoopDoneMarkerIgnoredWithEdits(t *testing.T) {
 		MaxIterations: 2,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -1032,14 +797,6 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{
-		Model:    "haiku",
-		MaxTurns: 1,
-	})
-	distillerClient.SetCommandCreator(mockDistillerCreator("Complete implementation"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client (empty so DEV_DONE is accepted)
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -1050,10 +807,9 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -1121,14 +877,6 @@ func TestDevDoneMarkerSanitizedFromProgress(t *testing.T) {
 		"Write", // Using Write tool (an edit tool)
 	))
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{
-		Model:    "haiku",
-		MaxTurns: 1,
-	})
-	distillerClient.SetCommandCreator(mockDistillerCreator("test commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -1139,10 +887,9 @@ func TestDevDoneMarkerSanitizedFromProgress(t *testing.T) {
 		MaxIterations: 1,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -1265,11 +1012,6 @@ func TestLoop_DeveloperOnlyIteration(t *testing.T) {
 	})
 	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nWorking on feature\n\n## Learnings\nFound pattern\n\n## Status\nRUNNING RUNNING RUNNING"))
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("wip: working on feature"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -1280,10 +1022,9 @@ func TestLoop_DeveloperOnlyIteration(t *testing.T) {
 		MaxIterations: 1,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1365,11 +1106,6 @@ func TestLoop_DeveloperDoneTriggersReviewer(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("Complete feature"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client - return empty diff so developer can signal done
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -1380,10 +1116,9 @@ func TestLoop_DeveloperDoneTriggersReviewer(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1459,11 +1194,6 @@ func TestLoop_DevDoneIgnoredWithEdits(t *testing.T) {
 		"Edit",
 	))
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("wip"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -1474,10 +1204,9 @@ func TestLoop_DevDoneIgnoredWithEdits(t *testing.T) {
 		MaxIterations: 2,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1551,11 +1280,6 @@ func TestLoop_ReviewerRejects(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("wip"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -1567,10 +1291,9 @@ func TestLoop_ReviewerRejects(t *testing.T) {
 		MaxIterations: 1,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1671,11 +1394,6 @@ func TestLoop_FeedbackIncludedInNextIteration(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("fix security"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunner())
@@ -1686,10 +1404,9 @@ func TestLoop_FeedbackIncludedInNextIteration(t *testing.T) {
 		MaxIterations: 1,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1754,8 +1471,7 @@ func mockJJRunnerWithDiff(baseChangeID, diffContent string) jj.CommandRunner {
 					return diffContent, "", nil
 				}
 			}
-			// Plain jj diff (no args) - used by distillAndCommit to get current change diff
-			// Return the diff content to trigger distillation
+			// Plain jj diff (no args) - returns diff content
 			if len(args) == 1 {
 				return diffContent, "", nil
 			}
@@ -1803,11 +1519,6 @@ func TestLoop_ReviewerReceivesCumulativeDiff(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("done"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client that returns a proper diff
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerWithDiff(baseChangeID, expectedDiff))
@@ -1818,10 +1529,9 @@ func TestLoop_ReviewerReceivesCumulativeDiff(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1905,11 +1615,6 @@ func TestLoop_AgentTypeStoredInSession(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("done"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -1920,10 +1625,9 @@ func TestLoop_AgentTypeStoredInSession(t *testing.T) {
 		MaxIterations: 100,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1999,11 +1703,6 @@ func TestLoop_ExtremeMode_DoesNotExitOnFirstBothDone(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock distiller
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("extreme mode commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	// Create mock jj client (empty so DEV_DONE is accepted)
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
@@ -2015,10 +1714,9 @@ func TestLoop_ExtremeMode_DoesNotExitOnFirstBothDone(t *testing.T) {
 		ExtremeMode:   true,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	// Run with timeout
@@ -2120,10 +1818,6 @@ func TestLoop_ExtremeMode_TriggersPlus3(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
 
@@ -2133,10 +1827,9 @@ func TestLoop_ExtremeMode_TriggersPlus3(t *testing.T) {
 		ExtremeMode:   true,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2232,10 +1925,6 @@ func TestLoop_ExtremeMode_SubsequentDoneIgnored(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
 
@@ -2245,10 +1934,9 @@ func TestLoop_ExtremeMode_SubsequentDoneIgnored(t *testing.T) {
 		ExtremeMode:   true,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2319,10 +2007,6 @@ func TestLoop_ExtremeMode_EffectiveMaxIter(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
 
@@ -2332,10 +2016,9 @@ func TestLoop_ExtremeMode_EffectiveMaxIter(t *testing.T) {
 		ExtremeMode:   true,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -2411,10 +2094,6 @@ func TestLoop_ExtremeMode_TriggerOnIteration1(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
-	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
-	testDistiller := distill.NewDistiller(distillerClient)
-
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
 
@@ -2424,10 +2103,9 @@ func TestLoop_ExtremeMode_TriggerOnIteration1(t *testing.T) {
 		ExtremeMode:   true,
 		WorkDir:       "/tmp",
 	}, Deps{
-		DB:        database,
-		Claude:    claudeClient,
-		Distiller: testDistiller,
-		JJ:        jjClient,
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

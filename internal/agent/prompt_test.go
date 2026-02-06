@@ -794,15 +794,18 @@ func TestReviewerPromptNoVCSCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should NOT contain instructions to run jj/git commands
+	// Should NOT contain developer-style VCS instructions
 	if strings.Contains(prompt, "Use `jj diff`") {
 		t.Error("prompt should not instruct to use jj diff")
 	}
 	if strings.Contains(prompt, "Use `git diff`") {
 		t.Error("prompt should not instruct to use git diff")
 	}
-	// But should contain instruction NOT to run VCS commands
-	if !strings.Contains(prompt, "Do NOT run") {
-		t.Error("prompt should instruct reviewer not to run VCS commands")
+	// Should contain investigation commands for the reviewer
+	if !strings.Contains(prompt, "jj log") {
+		t.Error("prompt should mention jj log for investigation")
+	}
+	if !strings.Contains(prompt, "jj show") {
+		t.Error("prompt should mention jj show for investigation")
 	}
 }

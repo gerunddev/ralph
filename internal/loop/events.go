@@ -11,8 +11,6 @@ const (
 	EventStarted EventType = "started"
 	// EventIterationStart is emitted at the start of each iteration.
 	EventIterationStart EventType = "iteration_start"
-	// EventJJNew is emitted when jj new is called.
-	EventJJNew EventType = "jj_new"
 	// EventPromptBuilt is emitted when the prompt is built, with full prompt content.
 	EventPromptBuilt EventType = "prompt_built"
 	// EventClaudeStart is emitted when a Claude session starts.
@@ -25,10 +23,6 @@ const (
 	EventClaudeEnd EventType = "claude_end"
 	// EventParsed is emitted after output is parsed.
 	EventParsed EventType = "parsed"
-	// EventDistilling is emitted when commit message distillation starts.
-	EventDistilling EventType = "distilling"
-	// EventJJCommit is emitted when jj commit is called.
-	EventJJCommit EventType = "jj_commit"
 	// EventIterationEnd is emitted at the end of each iteration.
 	EventIterationEnd EventType = "iteration_end"
 	// EventDone is emitted when the agent says it's done.

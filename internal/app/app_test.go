@@ -9,7 +9,6 @@ import (
 
 	"github.com/gerunddev/ralph/internal/claude"
 	"github.com/gerunddev/ralph/internal/db"
-	"github.com/gerunddev/ralph/internal/distill"
 	"github.com/gerunddev/ralph/internal/jj"
 )
 
@@ -78,26 +77,6 @@ func TestApp_SetClaudeClient(t *testing.T) {
 
 	if app.claudeOverride != mockClient {
 		t.Error("Claude client not set correctly")
-	}
-}
-
-func TestApp_SetDistiller(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "ralph-app-test-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tempDir) })
-
-	app, err := New(Config{WorkDir: tempDir})
-	if err != nil {
-		t.Fatalf("New() error: %v", err)
-	}
-
-	mockDistiller := distill.NewDistillerWithDefaults()
-	app.SetDistiller(mockDistiller)
-
-	if app.distillOverride != mockDistiller {
-		t.Error("Distiller not set correctly")
 	}
 }
 
@@ -250,11 +229,6 @@ func TestApp_InitDependencies_CreatesDatabase(t *testing.T) {
 		t.Error("Expected Claude client to be initialized")
 	}
 
-	// Verify distiller was created
-	if app.distill == nil {
-		t.Error("Expected distiller to be initialized")
-	}
-
 	// Verify jj client was created
 	if app.jj == nil {
 		t.Error("Expected jj client to be initialized")
@@ -279,11 +253,9 @@ func TestApp_InitDependencies_UsesOverrides(t *testing.T) {
 
 	// Set overrides
 	mockClaude := claude.NewClient(claude.ClientConfig{Model: "mock"})
-	mockDistiller := distill.NewDistillerWithDefaults()
 	mockJJ := jj.NewClient(tempDir)
 
 	app.SetClaudeClient(mockClaude)
-	app.SetDistiller(mockDistiller)
 	app.SetJJClient(mockJJ)
 
 	err = app.initDependencies()
@@ -295,9 +267,6 @@ func TestApp_InitDependencies_UsesOverrides(t *testing.T) {
 	// Verify overrides were used
 	if app.claude != mockClaude {
 		t.Error("Expected Claude override to be used")
-	}
-	if app.distill != mockDistiller {
-		t.Error("Expected distiller override to be used")
 	}
 	if app.jj != mockJJ {
 		t.Error("Expected jj override to be used")

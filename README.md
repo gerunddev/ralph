@@ -1,6 +1,6 @@
 # Ralph
 
-Ralph is an iterative AI development tool that runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in automated loops against a plan file. It orchestrates a developer → reviewer agent cycle, creates isolated [Jujutsu](https://github.com/martinvonz/jj) commits for each iteration, and stops when both agents approve the work or the iteration limit is reached.
+Ralph is an iterative AI development tool that runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) in automated loops against a plan file. It orchestrates a developer → reviewer agent cycle using [Jujutsu](https://github.com/martinvonz/jj) for change tracking, and stops when both agents approve the work or the iteration limit is reached.
 
 ## Opinionated Choices
 
@@ -8,9 +8,8 @@ Ralph makes deliberate choices that reflect a specific vision of AI-assisted dev
 
 | Choice | What It Means |
 |--------|---------------|
-| **[Jujutsu](https://github.com/martinvonz/jj) for version control** | Not git. Ralph requires jj and uses its change-based model for clean iteration isolation. Each agent turn gets its own change. |
+| **[Jujutsu](https://github.com/martinvonz/jj) for version control** | Not git. Ralph requires jj and uses its change-based model for tracking cumulative diffs across iterations. |
 | **[Claude](https://www.anthropic.com/claude) only** | Uses Claude Code CLI exclusively. [Opus](https://www.anthropic.com/claude/opus) is the default model for development work. |
-| **[Haiku](https://www.anthropic.com/claude/haiku) for commit distillation** | Fast, cheap model generates conventional commit messages from diffs. |
 | **Developer → Reviewer loop** | Two-agent architecture: a developer agent writes code, then a reviewer agent inspects changes. Work isn't complete until both agree. |
 | **Plan-driven execution** | All work derives from a markdown plan file. Progress and learnings accumulate across iterations. |
 
@@ -56,7 +55,6 @@ ralph --resume <plan-id>
 2. **Ralph iterates**: Each iteration runs a developer → reviewer cycle:
    - Developer agent works on the plan, tracking progress and learnings
    - Reviewer agent inspects the cumulative diff, either approving or providing feedback
-   - Changes are committed with an AI-generated message
 3. **Completion**: Loop ends when both agents approve or max iterations reached
 
 Progress and learnings persist to a local SQLite database, so you can resume interrupted sessions.

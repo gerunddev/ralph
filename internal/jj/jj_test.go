@@ -89,209 +89,6 @@ func TestNewClient_EmptyPath(t *testing.T) {
 }
 
 // =============================================================================
-// Unit Tests - New
-// =============================================================================
-
-func TestNew(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.New(context.Background())
-	if err != nil {
-		t.Fatalf("New() returned error: %v", err)
-	}
-
-	// Verify the call
-	if len(mock.calls) != 1 {
-		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
-	}
-
-	call := mock.calls[0]
-	if call.name != "jj" {
-		t.Errorf("Call name = %q, want %q", call.name, "jj")
-	}
-	expectedArgs := []string{"new"}
-	if !slices.Equal(call.args, expectedArgs) {
-		t.Errorf("Call args = %v, want %v", call.args, expectedArgs)
-	}
-	if call.dir != "/test/dir" {
-		t.Errorf("Call dir = %q, want %q", call.dir, "/test/dir")
-	}
-}
-
-func TestNew_Error(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: not a jj repository", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.New(context.Background())
-	if err == nil {
-		t.Fatal("New() should return error")
-	}
-}
-
-func TestNew_NotRepo(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: There is no jj repo in \"/test\"", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.New(context.Background())
-	if !errors.Is(err, ErrNotRepo) {
-		t.Errorf("New() error = %v, want ErrNotRepo", err)
-	}
-}
-
-// =============================================================================
-// Unit Tests - NewChange
-// =============================================================================
-
-func TestNewChange(t *testing.T) {
-	mock := newMockRunner()
-	// First call: jj new --no-edit -m "description"
-	mock.addResponse("", "", nil)
-	// Second call: jj log -r @ -T change_id --no-graph
-	mock.addResponse("abc123def456", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	changeID, err := client.NewChange(context.Background(), "Test description")
-	if err != nil {
-		t.Fatalf("NewChange() returned error: %v", err)
-	}
-
-	if changeID != "abc123def456" {
-		t.Errorf("NewChange() changeID = %q, want %q", changeID, "abc123def456")
-	}
-
-	// Verify the first call (new)
-	if len(mock.calls) != 2 {
-		t.Fatalf("Expected 2 calls, got %d", len(mock.calls))
-	}
-
-	newCall := mock.calls[0]
-	expectedNewArgs := []string{"new", "--no-edit", "-m", "Test description"}
-	if !slices.Equal(newCall.args, expectedNewArgs) {
-		t.Errorf("NewChange() new call args = %v, want %v", newCall.args, expectedNewArgs)
-	}
-
-	// Verify the second call (log)
-	logCall := mock.calls[1]
-	expectedLogArgs := []string{"log", "-r", "@", "-T", "change_id", "--no-graph"}
-	if !slices.Equal(logCall.args, expectedLogArgs) {
-		t.Errorf("NewChange() log call args = %v, want %v", logCall.args, expectedLogArgs)
-	}
-}
-
-func TestNewChange_EmptyDescription(t *testing.T) {
-	mock := newMockRunner()
-	// First call: jj new --no-edit (no -m flag)
-	mock.addResponse("", "", nil)
-	// Second call: jj log -r @ -T change_id --no-graph
-	mock.addResponse("abc123", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	changeID, err := client.NewChange(context.Background(), "")
-	if err != nil {
-		t.Fatalf("NewChange() returned error: %v", err)
-	}
-
-	if changeID != "abc123" {
-		t.Errorf("NewChange() changeID = %q, want %q", changeID, "abc123")
-	}
-
-	// Verify the new command has no -m flag
-	newCall := mock.calls[0]
-	expectedNewArgs := []string{"new", "--no-edit"}
-	if !slices.Equal(newCall.args, expectedNewArgs) {
-		t.Errorf("NewChange() new call args = %v, want %v", newCall.args, expectedNewArgs)
-	}
-}
-
-func TestNewChange_Error(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: failed", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	_, err := client.NewChange(context.Background(), "Test")
-	if err == nil {
-		t.Fatal("NewChange() should return error")
-	}
-}
-
-// =============================================================================
-// Unit Tests - Describe
-// =============================================================================
-
-func TestDescribe(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Describe(context.Background(), "New description")
-	if err != nil {
-		t.Fatalf("Describe() returned error: %v", err)
-	}
-
-	// Verify the call
-	if len(mock.calls) != 1 {
-		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
-	}
-
-	call := mock.calls[0]
-	expectedArgs := []string{"describe", "-m", "New description"}
-	if !slices.Equal(call.args, expectedArgs) {
-		t.Errorf("Describe() called with args %v, want %v", call.args, expectedArgs)
-	}
-}
-
-func TestDescribe_EmptyMessage(t *testing.T) {
-	mock := newMockRunner()
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Describe(context.Background(), "")
-	if err == nil {
-		t.Fatal("Describe() should return error for empty message")
-	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("Describe() error = %q, want error about empty description", err)
-	}
-
-	// Should not have made any calls
-	if len(mock.calls) != 0 {
-		t.Errorf("Expected 0 calls, got %d", len(mock.calls))
-	}
-}
-
-func TestDescribe_Error(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: describe failed", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Describe(context.Background(), "Test")
-	if err == nil {
-		t.Fatal("Describe() should return error")
-	}
-}
-
-// =============================================================================
 // Unit Tests - Show
 // =============================================================================
 
@@ -334,160 +131,6 @@ func TestShow_Error(t *testing.T) {
 	_, err := client.Show(context.Background())
 	if err == nil {
 		t.Fatal("Show() should return error")
-	}
-}
-
-// =============================================================================
-// Unit Tests - Commit
-// =============================================================================
-
-func TestCommit(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "", nil)
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Commit(context.Background(), "Test commit message")
-	if err != nil {
-		t.Fatalf("Commit() returned error: %v", err)
-	}
-
-	// Verify the call
-	if len(mock.calls) != 1 {
-		t.Fatalf("Expected 1 call, got %d", len(mock.calls))
-	}
-
-	call := mock.calls[0]
-	if call.name != "jj" {
-		t.Errorf("Call name = %q, want %q", call.name, "jj")
-	}
-	expectedArgs := []string{"commit", "-m", "Test commit message"}
-	if !slices.Equal(call.args, expectedArgs) {
-		t.Errorf("Call args = %v, want %v", call.args, expectedArgs)
-	}
-}
-
-func TestCommit_Error(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: commit failed", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Commit(context.Background(), "Test")
-	if err == nil {
-		t.Fatal("Commit() should return error")
-	}
-}
-
-func TestCommit_EmptyMessage(t *testing.T) {
-	mock := newMockRunner()
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Commit(context.Background(), "")
-	if err == nil {
-		t.Fatal("Commit() should return error for empty message")
-	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("Commit() error = %q, want error about empty message", err)
-	}
-
-	// Should not have made any calls
-	if len(mock.calls) != 0 {
-		t.Errorf("Expected 0 calls, got %d", len(mock.calls))
-	}
-}
-
-func TestCommit_WhitespaceOnlyMessage(t *testing.T) {
-	mock := newMockRunner()
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Commit(context.Background(), "   \n\t  ")
-	if err == nil {
-		t.Fatal("Commit() should return error for whitespace-only message")
-	}
-	if !strings.Contains(err.Error(), "empty") {
-		t.Errorf("Commit() error = %q, want error about empty message", err)
-	}
-}
-
-func TestCommit_NotRepo(t *testing.T) {
-	mock := newMockRunner()
-	mock.addResponse("", "Error: There is no jj repo in \"/test\"", errors.New("exit status 1"))
-
-	client := NewClient("/test/dir")
-	client.SetCommandRunner(mock.run)
-
-	err := client.Commit(context.Background(), "Test")
-	if !errors.Is(err, ErrNotRepo) {
-		t.Errorf("Commit() error = %v, want ErrNotRepo", err)
-	}
-}
-
-// =============================================================================
-// Unit Tests - Sanitize Message
-// =============================================================================
-
-func TestSanitizeMessage(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "normal message",
-			input:    "Fix bug in parser",
-			expected: "Fix bug in parser",
-		},
-		{
-			name:     "message with leading/trailing whitespace",
-			input:    "  Fix bug  ",
-			expected: "Fix bug",
-		},
-		{
-			name:     "message with null bytes",
-			input:    "Fix bug\x00 in parser",
-			expected: "Fix bug in parser",
-		},
-		{
-			name:     "message with newlines",
-			input:    "Fix bug\n\nWith details",
-			expected: "Fix bug\n\nWith details",
-		},
-		{
-			name:     "message with quotes",
-			input:    `Fix "important" bug`,
-			expected: `Fix "important" bug`,
-		},
-		{
-			name:     "message with special chars",
-			input:    "Fix bug ($variable)",
-			expected: "Fix bug ($variable)",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "only whitespace",
-			input:    "   \t\n  ",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := sanitizeMessage(tt.input)
-			if result != tt.expected {
-				t.Errorf("sanitizeMessage(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
 	}
 }
 
@@ -695,9 +338,9 @@ func TestWrapError_CommandNotFound(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	err := client.New(context.Background())
+	_, err := client.Status(context.Background())
 	if !errors.Is(err, ErrCommandNotFound) {
-		t.Errorf("New() error = %v, want ErrCommandNotFound", err)
+		t.Errorf("Status() error = %v, want ErrCommandNotFound", err)
 	}
 }
 
@@ -716,9 +359,9 @@ func TestWrapError_NotRepo(t *testing.T) {
 			client := NewClient("/test/dir")
 			client.SetCommandRunner(mock.run)
 
-			err := client.New(context.Background())
+			_, err := client.Status(context.Background())
 			if !errors.Is(err, ErrNotRepo) {
-				t.Errorf("New() error = %v, want ErrNotRepo", err)
+				t.Errorf("Status() error = %v, want ErrNotRepo", err)
 			}
 		})
 	}
@@ -731,9 +374,9 @@ func TestWrapError_ContextCanceled(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	err := client.New(context.Background())
+	_, err := client.Status(context.Background())
 	if !errors.Is(err, context.Canceled) {
-		t.Errorf("New() error = %v, want context.Canceled", err)
+		t.Errorf("Status() error = %v, want context.Canceled", err)
 	}
 }
 
@@ -744,9 +387,9 @@ func TestWrapError_ContextDeadlineExceeded(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	err := client.New(context.Background())
+	_, err := client.Status(context.Background())
 	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("New() error = %v, want context.DeadlineExceeded", err)
+		t.Errorf("Status() error = %v, want context.DeadlineExceeded", err)
 	}
 }
 
@@ -757,15 +400,15 @@ func TestWrapError_GenericError(t *testing.T) {
 	client := NewClient("/test/dir")
 	client.SetCommandRunner(mock.run)
 
-	err := client.New(context.Background())
+	_, err := client.Status(context.Background())
 	if err == nil {
-		t.Fatal("New() should return error")
+		t.Fatal("Status() should return error")
 	}
-	if !strings.Contains(err.Error(), "jj new failed") {
-		t.Errorf("New() error = %q, want error containing 'jj new failed'", err)
+	if !strings.Contains(err.Error(), "jj status failed") {
+		t.Errorf("Status() error = %q, want error containing 'jj status failed'", err)
 	}
 	if !strings.Contains(err.Error(), "Some error message") {
-		t.Errorf("New() error = %q, want error containing 'Some error message'", err)
+		t.Errorf("Status() error = %q, want error containing 'Some error message'", err)
 	}
 }
 
@@ -1032,38 +675,30 @@ func TestIntegration_BasicWorkflow(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	// Test Commit
-	err = client.Commit(ctx, "Add test file")
+	// Test Show
+	showOutput, err := client.Show(ctx)
 	if err != nil {
-		t.Fatalf("Commit() failed: %v", err)
+		t.Fatalf("Show() failed: %v", err)
+	}
+	if showOutput == "" {
+		t.Error("Show() should return non-empty output after file creation")
 	}
 
-	// Test New
-	err = client.New(ctx)
+	// Test Diff
+	diffOutput, err := client.Diff(ctx, "", "")
 	if err != nil {
-		t.Fatalf("New() failed: %v", err)
+		t.Fatalf("Diff() failed: %v", err)
 	}
-
-	// Create another file
-	testFile2 := filepath.Join(tempDir, "test2.txt")
-	if err := os.WriteFile(testFile2, []byte("second file\n"), 0644); err != nil {
-		t.Fatalf("Failed to create second test file: %v", err)
-	}
-
-	// Test another Commit
-	err = client.Commit(ctx, "Add second test file")
-	if err != nil {
-		t.Fatalf("Second Commit() failed: %v", err)
-	}
+	_ = diffOutput
 
 	// Test Log
 	logOutput, err := client.Log(ctx, "", "")
 	if err != nil {
 		t.Fatalf("Log() failed: %v", err)
 	}
-	// Log should contain our commit messages
-	if !strings.Contains(logOutput, "test file") {
-		t.Errorf("Log() output should contain commit messages, got: %s", logOutput)
+	// Log should return non-empty output
+	if logOutput == "" {
+		t.Error("Log() should return non-empty output")
 	}
 }
 
@@ -1082,9 +717,9 @@ func TestIntegration_NotRepo(t *testing.T) {
 	ctx := context.Background()
 	client := NewClient(tempDir)
 
-	err = client.New(ctx)
+	_, err = client.Status(ctx)
 	if err == nil {
-		t.Fatal("New() should fail in non-jj directory")
+		t.Fatal("Status() should fail in non-jj directory")
 	}
 	if !errors.Is(err, ErrNotRepo) {
 		t.Logf("Error (expected ErrNotRepo or similar): %v", err)
@@ -1122,9 +757,9 @@ func TestIntegration_ContextCancellation(t *testing.T) {
 
 	client := NewClient(tempDir)
 
-	err = client.New(ctx)
+	_, err = client.Status(ctx)
 	if err == nil {
-		t.Fatal("New() should fail with cancelled context")
+		t.Fatal("Status() should fail with cancelled context")
 	}
 	// The error might be context.Canceled or a wrapped error
 	if !errors.Is(err, context.Canceled) {
@@ -1163,9 +798,9 @@ func TestIntegration_ContextTimeout(t *testing.T) {
 
 	client := NewClient(tempDir)
 
-	// This should succeed within the timeout
-	err = client.New(ctx)
+	// Status should succeed within the timeout
+	_, err = client.Status(ctx)
 	if err != nil {
-		t.Logf("New() with timeout: %v", err)
+		t.Logf("Status() with timeout: %v", err)
 	}
 }
