@@ -26,6 +26,7 @@ import (
 // App orchestrates the main execution loop and TUI.
 type App struct {
 	cfg     *config.Config
+	appCfg  Config // App-level config (extreme mode, etc.)
 	db      *db.DB
 	claude  *claude.Client
 	distill *distill.Distiller
@@ -53,6 +54,9 @@ type Config struct {
 	// MaxIterationsOverride overrides the max_iterations from config.
 	// If 0, uses the value from config file.
 	MaxIterationsOverride int
+
+	// ExtremeMode enables extreme mode (+3 iterations after both done).
+	ExtremeMode bool
 }
 
 // New creates a new App.
@@ -79,6 +83,7 @@ func New(cfg Config) (*App, error) {
 
 	app := &App{
 		cfg:     appConfig,
+		appCfg:  cfg,
 		workDir: workDir,
 	}
 
@@ -246,6 +251,7 @@ func (a *App) createLoop() {
 	a.loop = loop.New(loop.Config{
 		PlanID:        a.plan.ID,
 		MaxIterations: a.cfg.MaxIterations,
+		ExtremeMode:   a.appCfg.ExtremeMode,
 		WorkDir:       a.workDir,
 	}, loop.Deps{
 		DB:        a.db,

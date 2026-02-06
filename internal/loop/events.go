@@ -56,6 +56,8 @@ const (
 	EventBothDone EventType = "both_done"
 	// EventContextLimit is emitted when the context window usage exceeds the limit.
 	EventContextLimit EventType = "context_limit"
+	// EventExtremeModeTriggered is emitted when extreme mode activates +3 iterations.
+	EventExtremeModeTriggered EventType = "extreme_mode_triggered"
 )
 
 // Event represents an event emitted by the loop.

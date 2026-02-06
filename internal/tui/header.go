@@ -60,6 +60,9 @@ func (h Header) View() string {
 	iterStr := "---"
 	if h.MaxIter > 0 {
 		iterStr = fmt.Sprintf("%d/%d", h.Iteration, h.MaxIter)
+	} else if h.Iteration > 0 {
+		// Extreme mode: MaxIter=0 means "X"
+		iterStr = fmt.Sprintf("%d/X", h.Iteration)
 	}
 
 	iterSection := headerValueStyle.Render(iterStr)

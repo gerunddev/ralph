@@ -51,6 +51,7 @@ func run() error {
 	var resumeID string
 	var maxIterations int
 	var promptStr string
+	var extremeMode bool
 
 	rootCmd := &cobra.Command{
 		Use:   "ralph [plan-file]",
@@ -84,21 +85,21 @@ Examples:
 				if len(args) > 0 || promptStr != "" {
 					return fmt.Errorf("cannot specify both --resume and plan file or --prompt")
 				}
-				return runResume(ctx, resumeID, maxIterations)
+				return runResume(ctx, resumeID, maxIterations, extremeMode)
 			}
 
 			if promptStr != "" {
 				if len(args) > 0 {
 					return fmt.Errorf("cannot specify both plan file and --prompt")
 				}
-				return runNewWithPrompt(ctx, promptStr, maxIterations)
+				return runNewWithPrompt(ctx, promptStr, maxIterations, extremeMode)
 			}
 
 			if len(args) == 0 {
 				return fmt.Errorf("plan file required (or use --resume or --prompt)")
 			}
 
-			return runNew(ctx, args[0], maxIterations)
+			return runNew(ctx, args[0], maxIterations, extremeMode)
 		},
 	}
 
@@ -108,6 +109,8 @@ Examples:
 		"Use inline prompt as the plan instead of a file")
 	rootCmd.Flags().IntVar(&maxIterations, "max-iterations", 0,
 		"Override max iterations from config")
+	rootCmd.Flags().BoolVarP(&extremeMode, "extreme", "x", false,
+		"Extreme mode: run +3 iterations after robots think they're done")
 
 	// Add subcommands
 	rootCmd.AddCommand(taskCmd())
@@ -136,7 +139,7 @@ func validateJJRepository(ctx context.Context) error {
 }
 
 // runNew starts execution with a new plan from the given file path.
-func runNew(ctx context.Context, planPath string, maxIterations int) error {
+func runNew(ctx context.Context, planPath string, maxIterations int, extremeMode bool) error {
 	// Validate plan file exists
 	if _, err := os.Stat(planPath); os.IsNotExist(err) {
 		return fmt.Errorf("plan file not found: %s", planPath)
@@ -145,6 +148,7 @@ func runNew(ctx context.Context, planPath string, maxIterations int) error {
 	// Create app
 	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
+		ExtremeMode:           extremeMode,
 	})
 	if err != nil {
 		return err
@@ -155,10 +159,11 @@ func runNew(ctx context.Context, planPath string, maxIterations int) error {
 }
 
 // runNewWithPrompt starts execution with a plan from an inline prompt string.
-func runNewWithPrompt(ctx context.Context, prompt string, maxIterations int) error {
+func runNewWithPrompt(ctx context.Context, prompt string, maxIterations int, extremeMode bool) error {
 	// Create app
 	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
+		ExtremeMode:           extremeMode,
 	})
 	if err != nil {
 		return err
@@ -169,10 +174,11 @@ func runNewWithPrompt(ctx context.Context, prompt string, maxIterations int) err
 }
 
 // runResume continues execution of an existing plan.
-func runResume(ctx context.Context, planID string, maxIterations int) error {
+func runResume(ctx context.Context, planID string, maxIterations int, extremeMode bool) error {
 	// Create app first to access database
 	app, err := appFactory(app.Config{
 		MaxIterationsOverride: maxIterations,
+		ExtremeMode:           extremeMode,
 	})
 	if err != nil {
 		return err

@@ -225,8 +225,8 @@ func (m Model) handleFloatingScroll(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleLoopEvent processes a loop event.
 func (m *Model) handleLoopEvent(event loop.Event) {
-	// Update iteration info
-	if event.MaxIter > 0 {
+	// Update iteration info (MaxIter=0 is valid in extreme mode, meaning "X")
+	if event.Iteration > 0 {
 		m.iteration = event.Iteration
 		m.maxIter = event.MaxIter
 		m.header.SetIteration(event.Iteration, event.MaxIter)
@@ -327,6 +327,10 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		maxIterMsg := statusFailedStyle.Render(fmt.Sprintf("⚠ %s", event.Message))
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", maxIterMsg))
 
+	case loop.EventExtremeModeTriggered:
+		extremeMsg := systemMessageStyle.Render(fmt.Sprintf("Extreme mode: %s", event.Message))
+		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", extremeMsg))
+
 	case loop.EventError:
 		errorMsg := errorStyle.Render(fmt.Sprintf("✗ ERROR: %s", event.Message))
 		m.feedPanel.AppendLine(errorMsg)
@@ -404,7 +408,13 @@ func formatToolUse(tool *claude.ToolUseContent) string {
 // Format: ──── Iteration 1/3 • Running ────
 func buildIterationMarker(iteration, maxIter int, phase string, width int) string {
 	// Build the content parts
-	iterText := iterationTextStyle.Render(fmt.Sprintf("Iteration %d/%d", iteration, maxIter))
+	var iterLabel string
+	if maxIter > 0 {
+		iterLabel = fmt.Sprintf("Iteration %d/%d", iteration, maxIter)
+	} else {
+		iterLabel = fmt.Sprintf("Iteration %d/X", iteration)
+	}
+	iterText := iterationTextStyle.Render(iterLabel)
 	bullet := iterationBulletStyle.Render(" • ")
 	phaseText := GetPhaseStyle(phase).Render(phase)
 

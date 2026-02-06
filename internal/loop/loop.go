@@ -69,6 +69,7 @@ func sanitizeDevDoneMarker(s string) string {
 type Config struct {
 	PlanID          string
 	MaxIterations   int
+	ExtremeMode     bool   // Enable extreme mode (+3 iterations after both done)
 	WorkDir         string // For jj operations
 	EventBufferSize int    // Size of event channel buffer (default: 1000)
 }
@@ -94,6 +95,9 @@ type Loop struct {
 	// For tracking state
 	plan         *db.Plan
 	baseChangeID string // jj change ID at the start of the loop, used for reviewer diffs
+
+	// Extreme mode state
+	extremeModeTriggered bool // Whether +3 has been triggered
 }
 
 // New creates a new Loop with the given configuration and dependencies.
@@ -113,6 +117,15 @@ func New(cfg Config, deps Deps) *Loop {
 // The channel is closed when the loop completes.
 func (l *Loop) Events() <-chan Event {
 	return l.events
+}
+
+// effectiveMaxIter returns the max iterations to use in events.
+// In extreme mode before trigger, returns 0 (signals "X" to UI).
+func (l *Loop) effectiveMaxIter() int {
+	if l.cfg.ExtremeMode && !l.extremeModeTriggered {
+		return 0
+	}
+	return l.cfg.MaxIterations
 }
 
 // CurrentIteration returns the current iteration number.
@@ -176,7 +189,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 
 	// Emit started event
-	l.emit(NewEvent(EventStarted, l.iteration, l.cfg.MaxIterations, "Loop started"))
+	l.emit(NewEvent(EventStarted, l.iteration, l.effectiveMaxIter(), "Loop started"))
 
 	// Main loop
 	for {
@@ -193,11 +206,13 @@ func (l *Loop) Run(ctx context.Context) error {
 		currentIter := l.iteration
 		l.iterationMu.Unlock()
 
-		// Check max iterations
-		if currentIter > l.cfg.MaxIterations {
-			l.emit(NewEvent(EventMaxIterations, l.iteration-1, l.cfg.MaxIterations,
-				fmt.Sprintf("Reached max iterations (%d)", l.cfg.MaxIterations)))
-			return nil
+		// Check max iterations (skip in extreme mode until triggered)
+		if !l.cfg.ExtremeMode || l.extremeModeTriggered {
+			if currentIter > l.cfg.MaxIterations {
+				l.emit(NewEvent(EventMaxIterations, l.iteration-1, l.effectiveMaxIter(),
+					fmt.Sprintf("Reached max iterations (%d)", l.cfg.MaxIterations)))
+				return nil
+			}
 		}
 
 		// Run one iteration
@@ -208,16 +223,28 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			// Log error but continue - be resilient
 			log.Error("iteration error", "iteration", l.iteration, "error", err)
-			l.emit(NewErrorEvent(l.iteration, l.cfg.MaxIterations, err))
+			l.emit(NewErrorEvent(l.iteration, l.effectiveMaxIter(), err))
 			continue
 		}
 
 		if done {
-			// Agent said "DONE DONE DONE!!!"
+			if l.cfg.ExtremeMode {
+				if !l.extremeModeTriggered {
+					// First "both done" in extreme mode - trigger +3
+					l.extremeModeTriggered = true
+					l.cfg.MaxIterations = currentIter + 3
+					l.emit(NewEvent(EventExtremeModeTriggered, l.iteration, l.effectiveMaxIter(),
+						fmt.Sprintf("+3 iterations (max now %d)", l.cfg.MaxIterations)))
+					continue
+				}
+				// Already triggered - ignore done, keep going
+				continue
+			}
+			// Normal mode - exit
 			if err := l.deps.DB.UpdatePlanStatus(l.cfg.PlanID, db.PlanStatusCompleted); err != nil {
 				log.Warn("failed to mark plan complete", "error", err)
 			}
-			l.emit(NewEvent(EventDone, l.iteration, l.cfg.MaxIterations, "Agent completed"))
+			l.emit(NewEvent(EventDone, l.iteration, l.effectiveMaxIter(), "Agent completed"))
 			return nil
 		}
 	}
@@ -241,7 +268,7 @@ func (l *Loop) distillAndCommit(ctx context.Context, sessionID string) {
 		return
 	}
 
-	l.emit(NewEvent(EventDistilling, l.iteration, l.cfg.MaxIterations, "Distilling commit message"))
+	l.emit(NewEvent(EventDistilling, l.iteration, l.effectiveMaxIter(), "Distilling commit message"))
 
 	commitMsg, err := l.deps.Distiller.Distill(ctx, diff)
 	if err != nil {
@@ -249,12 +276,12 @@ func (l *Loop) distillAndCommit(ctx context.Context, sessionID string) {
 		// commitMsg already contains fallback from Distill
 	}
 
-	l.emit(NewEvent(EventJJCommit, l.iteration, l.cfg.MaxIterations,
+	l.emit(NewEvent(EventJJCommit, l.iteration, l.effectiveMaxIter(),
 		fmt.Sprintf("Committing: %s", commitMsg)))
 
 	if err := l.deps.JJ.Commit(ctx, commitMsg); err != nil {
 		log.Warn("jj commit failed", "error", err)
-		l.emit(NewErrorEvent(l.iteration, l.cfg.MaxIterations,
+		l.emit(NewErrorEvent(l.iteration, l.effectiveMaxIter(),
 			fmt.Errorf("jj commit failed: %w", err)))
 	}
 }
@@ -275,7 +302,7 @@ func (l *Loop) emit(event Event) {
 // runIteration runs a single iteration with developer and reviewer.
 // Returns (done, error) where done indicates both developer and reviewer approved.
 func (l *Loop) runIteration(ctx context.Context) (bool, error) {
-	l.emit(NewEvent(EventIterationStart, l.iteration, l.cfg.MaxIterations,
+	l.emit(NewEvent(EventIterationStart, l.iteration, l.effectiveMaxIter(),
 		fmt.Sprintf("Starting iteration %d", l.iteration)))
 
 	// 1. Load state
@@ -285,14 +312,14 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	}
 
 	// 2. Run developer agent
-	l.emit(NewEvent(EventDeveloperStart, l.iteration, l.cfg.MaxIterations, "Starting developer agent"))
+	l.emit(NewEvent(EventDeveloperStart, l.iteration, l.effectiveMaxIter(), "Starting developer agent"))
 
 	devOutput, devHadEdits, devSessionID, err := l.runDeveloper(ctx, progress, learnings, feedback)
 	if err != nil {
 		return false, fmt.Errorf("developer agent failed: %w", err)
 	}
 
-	l.emit(NewEvent(EventDeveloperEnd, l.iteration, l.cfg.MaxIterations, "Developer agent ended"))
+	l.emit(NewEvent(EventDeveloperEnd, l.iteration, l.effectiveMaxIter(), "Developer agent ended"))
 
 	// 3. Parse developer output
 	devResult := parser.ParseAgentOutput(devOutput, "developer")
@@ -315,13 +342,13 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 				"iteration", l.iteration)
 		}
 		l.distillAndCommit(ctx, devSessionID)
-		l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
+		l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
 			fmt.Sprintf("Developer iteration %d complete, continuing", l.iteration)))
 		return false, nil
 	}
 
 	// Developer done without edits - run reviewer
-	l.emit(NewEvent(EventDeveloperDone, l.iteration, l.cfg.MaxIterations,
+	l.emit(NewEvent(EventDeveloperDone, l.iteration, l.effectiveMaxIter(),
 		"Developer signaled DEV_DONE, triggering reviewer"))
 
 	// 7. Get diff for reviewer - use cumulative diff from base change, not just current change
@@ -372,14 +399,14 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	}
 
 	// 8. Run reviewer agent
-	l.emit(NewEvent(EventReviewerStart, l.iteration, l.cfg.MaxIterations, "Starting reviewer agent"))
+	l.emit(NewEvent(EventReviewerStart, l.iteration, l.effectiveMaxIter(), "Starting reviewer agent"))
 
 	reviewOutput, reviewSessionID, err := l.runReviewer(ctx, progress, learnings, diff, devOutput)
 	if err != nil {
 		return false, fmt.Errorf("reviewer agent failed: %w", err)
 	}
 
-	l.emit(NewEvent(EventReviewerEnd, l.iteration, l.cfg.MaxIterations, "Reviewer agent ended"))
+	l.emit(NewEvent(EventReviewerEnd, l.iteration, l.effectiveMaxIter(), "Reviewer agent ended"))
 
 	// 9. Parse reviewer output
 	reviewResult := parser.ParseAgentOutput(reviewOutput, "reviewer")
@@ -390,21 +417,17 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	// 11. Check reviewer verdict
 	if reviewResult.ReviewerApproved {
 		// BOTH voted DONE - complete!
-		l.emit(NewEvent(EventReviewerApproved, l.iteration, l.cfg.MaxIterations,
+		l.emit(NewEvent(EventReviewerApproved, l.iteration, l.effectiveMaxIter(),
 			"Reviewer approved - implementation complete"))
-		l.emit(NewEvent(EventBothDone, l.iteration, l.cfg.MaxIterations,
+		l.emit(NewEvent(EventBothDone, l.iteration, l.effectiveMaxIter(),
 			"Both developer and reviewer approved"))
-
-		if err := l.deps.DB.UpdatePlanStatus(l.cfg.PlanID, db.PlanStatusCompleted); err != nil {
-			log.Warn("failed to mark plan complete", "error", err)
-		}
 
 		l.distillAndCommit(ctx, reviewSessionID)
 		return true, nil
 	}
 
 	// 12. Reviewer has feedback - store for next iteration
-	l.emit(NewEvent(EventReviewerFeedback, l.iteration, l.cfg.MaxIterations,
+	l.emit(NewEvent(EventReviewerFeedback, l.iteration, l.effectiveMaxIter(),
 		fmt.Sprintf("Reviewer feedback: %s", truncateString(reviewResult.ReviewerFeedback, 100))))
 
 	if err := l.storeReviewerFeedback(reviewSessionID, reviewResult.ReviewerFeedback); err != nil {
@@ -413,7 +436,7 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 
 	l.distillAndCommit(ctx, reviewSessionID)
 
-	l.emit(NewEvent(EventIterationEnd, l.iteration, l.cfg.MaxIterations,
+	l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
 		fmt.Sprintf("iteration %d complete with reviewer feedback", l.iteration)))
 
 	return false, nil
@@ -461,7 +484,7 @@ func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback s
 		return "", false, "", fmt.Errorf("failed to build developer prompt: %w", err)
 	}
 
-	l.emit(NewPromptBuiltEvent(l.iteration, l.cfg.MaxIterations, prompt))
+	l.emit(NewPromptBuiltEvent(l.iteration, l.effectiveMaxIter(), prompt))
 
 	// Run jj new only if current change has content
 	isEmpty, err := l.deps.JJ.IsEmpty(ctx)
@@ -471,12 +494,12 @@ func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback s
 	}
 
 	if !isEmpty {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.cfg.MaxIterations, "Creating new jj change"))
+		l.emit(NewEvent(EventJJNew, l.iteration, l.effectiveMaxIter(), "Creating new jj change"))
 		if err := l.deps.JJ.New(ctx); err != nil {
 			log.Warn("jj new failed", "error", err)
 		}
 	} else {
-		l.emit(NewEvent(EventJJNew, l.iteration, l.cfg.MaxIterations, "Skipping jj new (current change is empty)"))
+		l.emit(NewEvent(EventJJNew, l.iteration, l.effectiveMaxIter(), "Skipping jj new (current change is empty)"))
 	}
 
 	// Create session in DB
@@ -516,7 +539,7 @@ func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSu
 		return "", "", fmt.Errorf("failed to build reviewer prompt: %w", err)
 	}
 
-	l.emit(NewPromptBuiltEvent(l.iteration, l.cfg.MaxIterations, prompt))
+	l.emit(NewPromptBuiltEvent(l.iteration, l.effectiveMaxIter(), prompt))
 
 	// Create session in DB
 	sessionID = uuid.New().String()
@@ -543,7 +566,7 @@ func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSu
 
 // runClaudeSession runs a Claude session and returns the output and whether edits occurred.
 func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (output string, hadEdits bool, err error) {
-	l.emit(NewEvent(EventClaudeStart, l.iteration, l.cfg.MaxIterations, "Starting Claude session"))
+	l.emit(NewEvent(EventClaudeStart, l.iteration, l.effectiveMaxIter(), "Starting Claude session"))
 
 	claudeSession, err := l.deps.Claude.Run(ctx, prompt)
 	if err != nil {
@@ -579,7 +602,7 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 					"percentage", fmt.Sprintf("%.1f%%", percentage),
 					"totalTokens", totalTokens,
 					"maxContext", maxContext)
-				l.emit(NewEvent(EventContextLimit, l.iteration, l.cfg.MaxIterations,
+				l.emit(NewEvent(EventContextLimit, l.iteration, l.effectiveMaxIter(),
 					fmt.Sprintf("Context limit reached: %.1f%% (%d/%d tokens)", percentage, totalTokens, maxContext)))
 				claudeSession.Cancel()
 				// Continue to drain remaining events from the channel
@@ -595,7 +618,7 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 
 		// Emit to our event channel
 		eventCopy := claudeEvent
-		l.emit(NewClaudeStreamEvent(l.iteration, l.cfg.MaxIterations, &eventCopy))
+		l.emit(NewClaudeStreamEvent(l.iteration, l.effectiveMaxIter(), &eventCopy))
 
 		// Store event in DB
 		dbEvent := &db.Event{
@@ -622,8 +645,8 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 	}
 
 	output = outputBuilder.String()
-	l.emit(NewClaudeOutputEvent(l.iteration, l.cfg.MaxIterations, output))
-	l.emit(NewEvent(EventClaudeEnd, l.iteration, l.cfg.MaxIterations, "Claude session ended"))
+	l.emit(NewClaudeOutputEvent(l.iteration, l.effectiveMaxIter(), output))
+	l.emit(NewEvent(EventClaudeEnd, l.iteration, l.effectiveMaxIter(), "Claude session ended"))
 
 	// Mark session complete
 	if err := l.deps.DB.CompletePlanSession(sessionID, db.PlanSessionCompleted, output); err != nil {

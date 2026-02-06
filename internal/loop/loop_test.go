@@ -1967,6 +1967,489 @@ func TestLoop_AgentTypeStoredInSession(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Extreme Mode Tests
+// =============================================================================
+
+func TestLoop_ExtremeMode_DoesNotExitOnFirstBothDone(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	// Create mock Claude client
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// Developer signals DEV_DONE
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else if callCount == 2 {
+			// Reviewer approves
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		} else {
+			// Subsequent iterations: developer keeps running
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	// Create mock distiller
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("extreme mode commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	// Create mock jj client (empty so DEV_DONE is accepted)
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	// Create loop with extreme mode enabled
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		ExtremeMode:   true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	// Run with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Collect events
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// Should NOT have EventDone (extreme mode continues)
+	var foundDone bool
+	for _, e := range events {
+		if e.Type == EventDone {
+			foundDone = true
+			break
+		}
+	}
+	if foundDone {
+		t.Error("expected EventDone NOT to be emitted in extreme mode")
+	}
+
+	// Should have EventExtremeModeTriggered
+	var foundExtreme bool
+	for _, e := range events {
+		if e.Type == EventExtremeModeTriggered {
+			foundExtreme = true
+			break
+		}
+	}
+	if !foundExtreme {
+		t.Error("expected EventExtremeModeTriggered event")
+	}
+
+	// Should have EventMaxIterations (loop exits by hitting max)
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+			break
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations event")
+	}
+
+	// Plan should NOT be marked completed in extreme mode - it exits via max iterations,
+	// not via the normal "done" path. Plan completion is only set in Run() for normal mode.
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status == db.PlanStatusCompleted {
+		t.Errorf("expected plan NOT to be marked complete in extreme mode (exits via max iterations), got: %s", updatedPlan.Status)
+	}
+
+	// Loop iteration counter is 5 because: trigger at iter 1, max becomes 1+3=4,
+	// runs iters 2,3,4, then increments to 5 and checks 5>4 which exits.
+	if loop.CurrentIteration() != 5 {
+		t.Errorf("expected iteration 5, got: %d", loop.CurrentIteration())
+	}
+}
+
+func TestLoop_ExtremeMode_TriggersPlus3(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else if callCount == 2 {
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		} else {
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		ExtremeMode:   true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// Find EventExtremeModeTriggered and check message contains "+3"
+	var foundExtreme bool
+	for _, e := range events {
+		if e.Type == EventExtremeModeTriggered {
+			foundExtreme = true
+			if !strings.Contains(e.Message, "+3") {
+				t.Errorf("expected extreme mode message to contain '+3', got: %s", e.Message)
+			}
+			break
+		}
+	}
+	if !foundExtreme {
+		t.Error("expected EventExtremeModeTriggered event")
+	}
+
+	// Should have EventMaxIterations
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+			break
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations event")
+	}
+
+	// Loop iteration counter is 5: trigger at iter 1, max=1+3=4,
+	// runs iters 2,3,4, increments to 5 and checks 5>4 which exits.
+	if loop.CurrentIteration() != 5 {
+		t.Errorf("expected iteration 5, got: %d", loop.CurrentIteration())
+	}
+}
+
+func TestLoop_ExtremeMode_SubsequentDoneIgnored(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		switch callCount {
+		case 1:
+			// Iter 1 developer: DEV_DONE
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		case 2:
+			// Iter 1 reviewer: APPROVED (triggers +3, max=4)
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		case 3:
+			// Iter 2 developer: DEV_DONE again
+			output = "## Progress\nDone again\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		case 4:
+			// Iter 2 reviewer: APPROVED again (should be ignored, already triggered)
+			output = "## Progress\nApproved again\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		case 5:
+			// Iter 3 developer: DEV_DONE again
+			output = "## Progress\nDone third time\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		case 6:
+			// Iter 3 reviewer: APPROVED again
+			output = "## Progress\nApproved third time\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		default:
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		ExtremeMode:   true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// EventExtremeModeTriggered should occur exactly once
+	extremeCount := 0
+	for _, e := range events {
+		if e.Type == EventExtremeModeTriggered {
+			extremeCount++
+		}
+	}
+	if extremeCount != 1 {
+		t.Errorf("expected exactly 1 EventExtremeModeTriggered, got %d", extremeCount)
+	}
+
+	// Should have EventMaxIterations (exits at max)
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+			break
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations event")
+	}
+}
+
+func TestLoop_ExtremeMode_EffectiveMaxIter(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else if callCount == 2 {
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		} else {
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		ExtremeMode:   true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	wg.Wait()
+
+	// Events before EventExtremeModeTriggered should have MaxIter==0
+	// Events after trigger should have MaxIter==4
+	foundTrigger := false
+	for _, e := range events {
+		if e.Type == EventExtremeModeTriggered {
+			foundTrigger = true
+			if e.MaxIter != 4 {
+				t.Errorf("expected MaxIter==4 on trigger event, got %d", e.MaxIter)
+			}
+			continue
+		}
+		if !foundTrigger {
+			// Before trigger: MaxIter should be 0 (extreme mode hides real max)
+			if e.MaxIter != 0 {
+				t.Errorf("expected MaxIter==0 before trigger for event %s, got %d", e.Type, e.MaxIter)
+			}
+		} else {
+			// After trigger: MaxIter should be 4
+			if e.MaxIter != 4 {
+				t.Errorf("expected MaxIter==4 after trigger for event %s, got %d", e.Type, e.MaxIter)
+			}
+		}
+	}
+
+	if !foundTrigger {
+		t.Error("expected EventExtremeModeTriggered event")
+	}
+}
+
+func TestLoop_ExtremeMode_TriggerOnIteration1(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else if callCount == 2 {
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		} else {
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	distillerClient := claude.NewClient(claude.ClientConfig{Model: "haiku", MaxTurns: 1})
+	distillerClient.SetCommandCreator(mockDistillerCreator("extreme commit"))
+	testDistiller := distill.NewDistiller(distillerClient)
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		ExtremeMode:   true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:        database,
+		Claude:    claudeClient,
+		Distiller: testDistiller,
+		JJ:        jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	go func() {
+		for range loop.Events() {
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+
+	// Trigger at iteration 1, max=1+3=4, runs iters 2,3,4,
+	// then increments to 5 and checks 5>4 which exits.
+	if loop.CurrentIteration() != 5 {
+		t.Errorf("expected iteration 5, got: %d", loop.CurrentIteration())
+	}
+}
+
 func TestTruncateDiff(t *testing.T) {
 	tests := []struct {
 		name      string

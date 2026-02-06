@@ -1497,3 +1497,75 @@ func TestExtractMainParam(t *testing.T) {
 		})
 	}
 }
+
+func TestHeader_View_ExtremeModeMaxIterZero(t *testing.T) {
+	h := NewHeader()
+	h.SetIteration(3, 0) // MaxIter=0 means extreme mode "X"
+	h.SetStatus("Running")
+	h.SetWidth(80)
+
+	view := h.View()
+
+	if !strings.Contains(view, "3/X") {
+		t.Errorf("expected iteration '3/X' for extreme mode, got view: %s", view)
+	}
+	if strings.Contains(view, "3/0") {
+		t.Error("should NOT show '3/0', should show '3/X'")
+	}
+}
+
+func TestHeader_View_BeforeFirstIteration(t *testing.T) {
+	h := NewHeader()
+	h.SetIteration(0, 0) // Before first iteration with extreme mode
+	h.SetStatus("Pending")
+	h.SetWidth(80)
+
+	view := h.View()
+
+	// When iteration is 0 and maxIter is 0, should show "---" (not "0/X")
+	if strings.Contains(view, "/X") {
+		t.Error("should NOT show '/X' when iteration is 0")
+	}
+}
+
+func TestBuildIterationMarker_ExtremeMode(t *testing.T) {
+	result := buildIterationMarker(3, 0, "Running", 60)
+
+	if !strings.Contains(result, "Iteration 3/X") {
+		t.Errorf("expected 'Iteration 3/X' for extreme mode, got: %s", result)
+	}
+	if strings.Contains(result, "Iteration 3/0") {
+		t.Error("should NOT show 'Iteration 3/0'")
+	}
+}
+
+func TestModel_HandleLoopEvent_ExtremeModeTriggered(t *testing.T) {
+	events := make(chan loop.Event, 10)
+	m := NewModelWithEvents(events)
+	m = updateModel(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	event := loop.Event{
+		Type:      loop.EventExtremeModeTriggered,
+		Iteration: 3,
+		MaxIter:   6,
+		Message:   "+3 iterations (max now 6)",
+	}
+
+	m.handleLoopEvent(event)
+
+	// MaxIter should be updated
+	if m.maxIter != 6 {
+		t.Errorf("expected maxIter 6 after extreme mode trigger, got %d", m.maxIter)
+	}
+
+	// Feed should contain the extreme mode message
+	output := m.feedPanel.Content()
+	if !strings.Contains(output, "Extreme mode") {
+		t.Errorf("expected 'Extreme mode' in feed, got '%s'", output)
+	}
+	if !strings.Contains(output, "+3 iterations") {
+		t.Errorf("expected '+3 iterations' in feed, got '%s'", output)
+	}
+
+	close(events)
+}

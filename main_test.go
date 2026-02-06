@@ -32,6 +32,7 @@ type testFlags struct {
 	promptStr     string
 	resumeID      string
 	maxIterations int
+	extremeMode   bool
 }
 
 // createTestCommand creates a test version of the root command
@@ -94,6 +95,8 @@ Examples:
 		"Use inline prompt as the plan instead of a file")
 	rootCmd.Flags().IntVar(&flags.maxIterations, "max-iterations", 0,
 		"Override max iterations from config")
+	rootCmd.Flags().BoolVarP(&flags.extremeMode, "extreme", "x", false,
+		"Extreme mode: run +3 iterations after robots think they're done")
 
 	return rootCmd, flags
 }
@@ -545,7 +548,7 @@ func TestRunNew_PlanFileNotFound(t *testing.T) {
 	tempDir := t.TempDir()
 	nonExistentPath := filepath.Join(tempDir, "nonexistent.md")
 
-	err := runNew(context.Background(), nonExistentPath, 0)
+	err := runNew(context.Background(), nonExistentPath, 0, false)
 	if err == nil {
 		t.Error("Expected error for non-existent plan file")
 	}
@@ -572,7 +575,7 @@ func TestRunNew_PlanFileExists_AppFactoryError(t *testing.T) {
 		t.Fatalf("Failed to create test plan file: %v", err)
 	}
 
-	err = runNew(context.Background(), planPath, 0)
+	err = runNew(context.Background(), planPath, 0, false)
 	if err == nil {
 		t.Error("Expected error from app factory")
 	}
@@ -610,7 +613,7 @@ func TestRunNew_Success(t *testing.T) {
 		t.Fatalf("Failed to create test plan file: %v", err)
 	}
 
-	err = runNew(context.Background(), planPath, 25)
+	err = runNew(context.Background(), planPath, 25, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -646,7 +649,7 @@ func TestRunNew_AppRunError(t *testing.T) {
 		t.Fatalf("Failed to create test plan file: %v", err)
 	}
 
-	err = runNew(context.Background(), planPath, 0)
+	err = runNew(context.Background(), planPath, 0, false)
 	if err == nil {
 		t.Error("Expected error from app.Run")
 	}
@@ -667,7 +670,7 @@ func TestRunNewWithPrompt_AppFactoryError(t *testing.T) {
 		return nil, errors.New("failed to create app")
 	}
 
-	err := runNewWithPrompt(context.Background(), "Fix the bug", 0)
+	err := runNewWithPrompt(context.Background(), "Fix the bug", 0, false)
 	if err == nil {
 		t.Error("Expected error from app factory")
 	}
@@ -697,7 +700,7 @@ func TestRunNewWithPrompt_Success(t *testing.T) {
 		return mockApp, nil
 	}
 
-	err := runNewWithPrompt(context.Background(), "Fix the login bug", 20)
+	err := runNewWithPrompt(context.Background(), "Fix the login bug", 20, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -725,7 +728,7 @@ func TestRunNewWithPrompt_AppRunError(t *testing.T) {
 		return mockApp, nil
 	}
 
-	err := runNewWithPrompt(context.Background(), "Fix bug", 0)
+	err := runNewWithPrompt(context.Background(), "Fix bug", 0, false)
 	if err == nil {
 		t.Error("Expected error from app.RunWithPrompt")
 	}
@@ -746,7 +749,7 @@ func TestRunResume_AppFactoryError(t *testing.T) {
 		return nil, errors.New("failed to create app")
 	}
 
-	err := runResume(context.Background(), "plan-123", 0)
+	err := runResume(context.Background(), "plan-123", 0, false)
 	if err == nil {
 		t.Error("Expected error from app factory")
 	}
@@ -776,7 +779,7 @@ func TestRunResume_Success(t *testing.T) {
 		return mockApp, nil
 	}
 
-	err := runResume(context.Background(), "plan-xyz", 42)
+	err := runResume(context.Background(), "plan-xyz", 42, false)
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
@@ -804,7 +807,7 @@ func TestRunResume_PlanNotFound(t *testing.T) {
 		return mockApp, nil
 	}
 
-	err := runResume(context.Background(), "nonexistent-plan", 0)
+	err := runResume(context.Background(), "nonexistent-plan", 0, false)
 	if err == nil {
 		t.Error("Expected error for plan not found")
 	}
@@ -828,12 +831,73 @@ func TestRunResume_OtherError(t *testing.T) {
 		return mockApp, nil
 	}
 
-	err := runResume(context.Background(), "plan-123", 0)
+	err := runResume(context.Background(), "plan-123", 0, false)
 	if err == nil {
 		t.Error("Expected error from resume")
 	}
 	if !strings.Contains(err.Error(), "database connection failed") {
 		t.Errorf("Expected 'database connection failed' error, got: %v", err)
+	}
+}
+
+func TestCLI_ExtremeModeFlagShort(t *testing.T) {
+	cmd, flags := createTestCommand()
+	_, err := executeCommand(cmd, "plan.md", "-x")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !flags.extremeMode {
+		t.Error("Expected extremeMode to be true with -x flag")
+	}
+}
+
+func TestCLI_ExtremeModeFlagLong(t *testing.T) {
+	cmd, flags := createTestCommand()
+	_, err := executeCommand(cmd, "plan.md", "--extreme")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !flags.extremeMode {
+		t.Error("Expected extremeMode to be true with --extreme flag")
+	}
+}
+
+func TestCLI_ExtremeModeDefaultFalse(t *testing.T) {
+	cmd, flags := createTestCommand()
+	_, err := executeCommand(cmd, "plan.md")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if flags.extremeMode {
+		t.Error("Expected extremeMode to be false by default")
+	}
+}
+
+func TestRunNew_ExtremeModePassedToApp(t *testing.T) {
+	originalFactory := appFactory
+	defer func() { appFactory = originalFactory }()
+
+	var capturedExtremeMode bool
+	mockApp := &mockAppImpl{
+		runFunc: func(ctx context.Context, planPath string) error {
+			return nil
+		},
+	}
+	appFactory = func(cfg app.Config) (App, error) {
+		capturedExtremeMode = cfg.ExtremeMode
+		return mockApp, nil
+	}
+
+	tempDir := t.TempDir()
+	planPath := filepath.Join(tempDir, "plan.md")
+	os.WriteFile(planPath, []byte("# Test Plan"), 0644)
+
+	err := runNew(context.Background(), planPath, 0, true)
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !capturedExtremeMode {
+		t.Error("Expected ExtremeMode=true to be passed to app.Config")
 	}
 }
 
