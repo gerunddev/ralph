@@ -288,8 +288,13 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		m.feedPanel.AppendLine(systemMessageStyle.Render("Iteration complete"))
 
 	case loop.EventDeveloperStart:
-		m.status = "Developing"
-		m.header.SetStatus("Developing")
+		if event.TeamMode {
+			m.status = "Developing (Team)"
+			m.header.SetStatus("Developing (Team)")
+		} else {
+			m.status = "Developing"
+			m.header.SetStatus("Developing")
+		}
 
 	case loop.EventDeveloperEnd:
 		// Status will be updated by reviewer start or done event

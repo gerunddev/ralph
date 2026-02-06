@@ -395,6 +395,113 @@ func hasClaude() bool {
 	return err == nil
 }
 
+// =============================================================================
+// Client Tests - Environment Variables
+// =============================================================================
+
+func TestNewClient_WithEnvVars(t *testing.T) {
+	cfg := ClientConfig{
+		Model:   "opus",
+		EnvVars: []string{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1", "OTHER_VAR=value"},
+	}
+
+	client := NewClient(cfg)
+
+	if client == nil {
+		t.Fatal("NewClient() returned nil")
+	}
+	if len(client.envVars) != 2 {
+		t.Errorf("client.envVars length = %d, want 2", len(client.envVars))
+	}
+	if client.envVars[0] != "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" {
+		t.Errorf("client.envVars[0] = %q, want CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1", client.envVars[0])
+	}
+}
+
+func TestNewClient_WithoutEnvVars(t *testing.T) {
+	cfg := ClientConfig{
+		Model: "opus",
+	}
+
+	client := NewClient(cfg)
+
+	if client == nil {
+		t.Fatal("NewClient() returned nil")
+	}
+	if len(client.envVars) != 0 {
+		t.Errorf("client.envVars length = %d, want 0", len(client.envVars))
+	}
+}
+
+func TestClient_RunSetsEnvVars(t *testing.T) {
+	cfg := ClientConfig{
+		EnvVars: []string{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"},
+	}
+	client := NewClient(cfg)
+
+	var capturedEnv []string
+	client.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "echo", "-n", `{"type":"init","session_id":"test"}`)
+		// The client will set cmd.Env after this returns, so we can't capture here.
+		// Instead, we verify through the production code path.
+		return cmd
+	})
+
+	ctx := context.Background()
+	session, err := client.Run(ctx, "test prompt")
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+
+	// Drain events
+	for range session.Events() {
+	}
+	_ = session.Wait()
+
+	// Verify env was set on the command (we check the cmd.Env field)
+	// The cmd.Env should contain our env var since the client sets it
+	capturedEnv = session.cmd.Env
+	if capturedEnv == nil {
+		t.Fatal("expected cmd.Env to be set when EnvVars are configured")
+	}
+
+	found := false
+	for _, env := range capturedEnv {
+		if env == "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1 in cmd.Env")
+	}
+}
+
+func TestClient_RunDoesNotSetEnvVarsWhenEmpty(t *testing.T) {
+	cfg := ClientConfig{}
+	client := NewClient(cfg)
+
+	client.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		return exec.CommandContext(ctx, "echo", "-n", `{"type":"init","session_id":"test"}`)
+	})
+
+	ctx := context.Background()
+	session, err := client.Run(ctx, "test prompt")
+	if err != nil {
+		t.Fatalf("Run() returned error: %v", err)
+	}
+
+	// Drain events
+	for range session.Events() {
+	}
+	_ = session.Wait()
+
+	// When no env vars configured, cmd.Env should be nil (inherit from parent)
+	if session.cmd.Env != nil {
+		t.Error("expected cmd.Env to be nil when no EnvVars configured")
+	}
+}
+
 func TestIntegration_BasicRun(t *testing.T) {
 	if !hasClaude() {
 		t.Skip("claude not installed, skipping integration test")

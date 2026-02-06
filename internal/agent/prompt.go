@@ -91,6 +91,7 @@ type DeveloperContext struct {
 	Progress         string // Current progress (empty string if none)
 	Learnings        string // Current learnings (empty string if none)
 	ReviewerFeedback string // Feedback from last review rejection (empty if none)
+	TeamMode         bool   // Whether agent teams are enabled
 }
 
 // ReviewerContext holds context for reviewer agent prompts.
@@ -100,6 +101,7 @@ type ReviewerContext struct {
 	Learnings        string // Current learnings (empty string if none)
 	DiffOutput       string // Output from jj show (the changes to review)
 	DeveloperSummary string // Developer's output text for context
+	DevSignaledDone  bool   // Whether the developer has signaled completion
 }
 
 // BuildPrompt constructs the full agent prompt from the given context.
@@ -168,12 +170,14 @@ Always output three sections with these exact headers, separated by horizontal r
 ## Status
 RUNNING RUNNING RUNNING
 
-When you are completely done (in a review-only session with no file edits, where you find neither remaining work nor code review feedback to address), change the Status section to:
+When you believe ALL work from the plan is complete and your implementation
+is correct, change the Status section to:
 
 ## Status
 DEV_DONE DEV_DONE DEV_DONE!!!
 
-If you edited files this cycle, you must do at least one more review cycle before signaling done.
+Review your changes carefully before signaling done. A reviewer will verify
+your work, and if issues are found, you will need to address them.
 
 ---
 
@@ -200,10 +204,31 @@ If you edited files this cycle, you must do at least one more review cycle befor
 The reviewer rejected your previous work. You MUST address all the following issues:
 
 {{.ReviewerFeedback}}
+{{end}}{{if .TeamMode}}
+---
+
+# Team Mode
+
+You have agent teams enabled. For this plan, you should:
+
+1. Analyze the plan and identify tasks that can be worked on in parallel
+2. Create an agent team and spawn teammates for independent tasks
+3. Assign each teammate a focused task with clear file ownership boundaries
+4. Coordinate the team until all tasks are complete
+5. Synthesize progress and learnings from all teammates
+
+Important:
+- All teammates work in the same directory and same jj change
+- Minimize file overlap between teammates to avoid edit conflicts
+- If a teammate encounters an edit conflict (old_string not found), they should re-read the file and retry
+- When all team work is complete, report the combined progress and learnings in your output
+- Signal DEV_DONE only when ALL teammates have finished their work
 {{end}}`
 
 // ReviewerPromptTemplate is the template for reviewer agent prompts.
-const ReviewerPromptTemplate = `# Instructions
+// It uses DevSignaledDone to switch between final review mode (strict) and
+// progress review mode (lenient for work-in-progress).
+const ReviewerPromptTemplate = `{{if .DevSignaledDone}}# Instructions
 
 You are a VERY HARD CRITIC code reviewer.
 
@@ -265,7 +290,61 @@ REVIEWER_APPROVED REVIEWER_APPROVED!!!
 
 Otherwise:
 REVIEWER_FEEDBACK: [Summarize what needs to be fixed]
+{{else}}# Instructions
 
+You are reviewing work in progress. The developer is still working on the plan.
+
+## Important
+
+The diff section below shows the cumulative changes made during this development session. If the diff appears incomplete, incorrect, or you need to understand the context of changes better, you MAY use jj commands to examine the history:
+- ` + "`jj log`" + ` to see the commit history
+- ` + "`jj show <change-id>`" + ` to see the diff for a specific change
+- ` + "`jj diff --from <change-id> --to <change-id>`" + ` to see changes between specific points
+
+If the diff section shows "No code changes to review" then no code was modified and you should approve.
+
+## Your Focus
+- Architectural problems or design decisions that will be costly to fix later
+- Bugs or incorrect logic in code that has been written so far
+- Security vulnerabilities in completed code
+- Patterns that will cause issues as more code is built on top
+
+## What NOT to Flag
+- Incomplete features that are clearly still in progress per the plan
+- Missing tests for code that isn't finished yet
+- TODOs or placeholder code that the developer is clearly planning to address
+
+## Output Format
+
+Always output three sections with these exact headers:
+
+## Progress
+[Summary of what you reviewed]
+
+## Learnings
+[Patterns you noticed, potential systemic issues]
+
+---
+
+Then output your review findings:
+
+### Critical Issues
+[List each critical issue with file:line reference, or "None"]
+
+### Major Issues
+[List each major issue with file:line reference, or "None"]
+
+### Minor Issues
+[List each minor issue with file:line reference, or "None"]
+
+### Verdict
+
+If everything looks reasonable so far:
+REVIEWER_APPROVED REVIEWER_APPROVED!!!
+
+If you spot issues worth addressing now:
+REVIEWER_FEEDBACK: [Summarize what needs to be fixed]
+{{end}}
 ---
 
 # Plan (for context)

@@ -3,6 +3,7 @@ package loop
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"sync"
@@ -350,8 +351,8 @@ func TestLoopContextCancellation(t *testing.T) {
 	if err == nil {
 		t.Error("expected error from context cancellation")
 	}
-	if err != context.DeadlineExceeded {
-		t.Errorf("expected context.DeadlineExceeded, got: %v", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("expected context.DeadlineExceeded (possibly wrapped), got: %v", err)
 	}
 }
 
@@ -690,104 +691,14 @@ func mockClaudeCreatorWithToolUse(output string, toolNames ...string) claude.Com
 	}
 }
 
-func TestLoopDoneMarkerIgnoredWithEdits(t *testing.T) {
-	database := setupTestDB(t)
-	plan := createTestPlan(t, database, "Test plan content")
-
-	// Create mock Claude client that outputs DEV_DONE but also uses an Edit tool
-	claudeClient := claude.NewClient(claude.ClientConfig{
-		Model:    "test",
-		MaxTurns: 1,
-	})
-	// Simulate using Edit tool then saying DEV_DONE - should be ignored
-	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
-		"## Progress\nMade edits\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!",
-		"Edit",
-	))
-
-	// Create mock jj client
-	jjClient := jj.NewClient("/tmp")
-	jjClient.SetCommandRunner(mockJJRunner())
-
-	// Create loop with max 2 iterations - if DONE is accepted, we'd only run 1
-	// If DONE is ignored (correctly), we should hit max iterations
-	loop := New(Config{
-		PlanID:        plan.ID,
-		MaxIterations: 2,
-		WorkDir:       "/tmp",
-	}, Deps{
-		DB:     database,
-		Claude: claudeClient,
-		JJ:     jjClient,
-	})
-
-	// Run with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Collect events with proper synchronization
-	var events []Event
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for event := range loop.Events() {
-			events = append(events, event)
-		}
-	}()
-
-	// Run the loop
-	err := loop.Run(ctx)
-	if err != nil {
-		t.Fatalf("loop.Run() error: %v", err)
-	}
-
-	// Wait for event collection to complete
-	wg.Wait()
-
-	// Should NOT have EventDone since DONE was rejected
-	var foundDone bool
-	for _, e := range events {
-		if e.Type == EventDone {
-			foundDone = true
-			break
-		}
-	}
-	if foundDone {
-		t.Error("expected EventDone NOT to be emitted when session had edits")
-	}
-
-	// Should have EventMaxIterations since loop continued after rejecting DONE
-	var foundMaxIter bool
-	for _, e := range events {
-		if e.Type == EventMaxIterations {
-			foundMaxIter = true
-			break
-		}
-	}
-	if !foundMaxIter {
-		t.Error("expected EventMaxIterations event when DONE is rejected due to edits")
-	}
-
-	// Plan should be marked "stopped" (not completed)
-	updatedPlan, err := database.GetPlan(plan.ID)
-	if err != nil {
-		t.Fatalf("failed to get plan: %v", err)
-	}
-	if updatedPlan.Status != db.PlanStatusStopped {
-		t.Errorf("expected plan status 'stopped' when DONE was rejected, got: %s", updatedPlan.Status)
-	}
-}
-
-func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
+func TestLoop_DevDonePlusReviewerApproved(t *testing.T) {
 	database := setupTestDB(t)
 	plan := createTestPlan(t, database, "Test plan content")
 
 	// Track calls to differentiate developer vs reviewer
 	callCount := 0
 
-	// Create mock Claude client - developer uses Read (not edit) and signals DEV_DONE,
-	// then reviewer approves
+	// Create mock Claude client - developer signals DEV_DONE, then reviewer approves
 	claudeClient := claude.NewClient(claude.ClientConfig{
 		Model:    "test",
 		MaxTurns: 1,
@@ -796,7 +707,7 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		callCount++
 		var output string
 		if callCount == 1 {
-			// Developer: uses Read tool (not an edit) and signals DEV_DONE
+			// Developer: signals DEV_DONE
 			output = "## Progress\nReviewed code\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
 		} else {
 			// Reviewer: approves
@@ -806,11 +717,9 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
-	// Create mock jj client (empty so DEV_DONE is accepted)
 	jjClient := jj.NewClient("/tmp")
 	jjClient.SetCommandRunner(mockJJRunnerEmpty())
 
-	// Create loop with high max iterations
 	loop := New(Config{
 		PlanID:        plan.ID,
 		MaxIterations: 100,
@@ -821,11 +730,9 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		JJ:     jjClient,
 	})
 
-	// Run with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Collect events
 	var events []Event
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -836,7 +743,6 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		}
 	}()
 
-	// Run the loop
 	err := loop.Run(ctx)
 	if err != nil {
 		t.Fatalf("loop.Run() error: %v", err)
@@ -853,7 +759,7 @@ func TestLoopDoneMarkerAcceptedWithoutEdits(t *testing.T) {
 		}
 	}
 	if !foundDone {
-		t.Error("expected EventDone to be emitted when session had no edits and reviewer approved")
+		t.Error("expected EventDone when DEV_DONE and REVIEWER_APPROVED")
 	}
 
 	// Plan should be marked complete
@@ -948,22 +854,6 @@ func TestDevDoneMarkerSanitizedFromProgress(t *testing.T) {
 	}
 }
 
-func TestIsEditTool(t *testing.T) {
-	editTools := []string{"Edit", "Write", "NotebookEdit"}
-	nonEditTools := []string{"Read", "Bash", "Glob", "Grep", "Task", "WebFetch", ""}
-
-	for _, tool := range editTools {
-		if !isEditTool(tool) {
-			t.Errorf("expected %q to be classified as an edit tool", tool)
-		}
-	}
-
-	for _, tool := range nonEditTools {
-		if isEditTool(tool) {
-			t.Errorf("expected %q to NOT be classified as an edit tool", tool)
-		}
-	}
-}
 
 func TestSanitizeDoneMarker(t *testing.T) {
 	tests := []struct {
@@ -1010,7 +900,7 @@ func TestSanitizeDevDoneMarker(t *testing.T) {
 // Dual-Agent Loop Tests
 // =============================================================================
 
-func TestLoop_DeveloperOnlyIteration(t *testing.T) {
+func TestLoop_DevRunningReviewerAlsoRuns(t *testing.T) {
 	database := setupTestDB(t)
 	plan := createTestPlan(t, database, "Test plan content")
 
@@ -1055,7 +945,7 @@ func TestLoop_DeveloperOnlyIteration(t *testing.T) {
 	}
 	wg.Wait()
 
-	// Should have developer events but NOT reviewer events (no DEV_DONE)
+	// Should have both developer and reviewer events (reviewer always runs)
 	var foundDevStart, foundDevEnd, foundReviewerStart bool
 	for _, e := range events {
 		if e.Type == EventDeveloperStart {
@@ -1075,8 +965,8 @@ func TestLoop_DeveloperOnlyIteration(t *testing.T) {
 	if !foundDevEnd {
 		t.Error("expected EventDeveloperEnd")
 	}
-	if foundReviewerStart {
-		t.Error("reviewer should NOT start when developer didn't signal DEV_DONE")
+	if !foundReviewerStart {
+		t.Error("expected EventReviewerStart - reviewer always runs regardless of DEV_DONE")
 	}
 
 	// Verify progress was stored
@@ -1186,78 +1076,6 @@ func TestLoop_DeveloperDoneTriggersReviewer(t *testing.T) {
 	}
 	if updatedPlan.Status != db.PlanStatusCompleted {
 		t.Errorf("expected plan status 'completed', got: %s", updatedPlan.Status)
-	}
-}
-
-func TestLoop_DevDoneIgnoredWithEdits(t *testing.T) {
-	database := setupTestDB(t)
-	plan := createTestPlan(t, database, "Test plan content")
-
-	// Create mock Claude client that outputs DEV_DONE but also uses Edit tool
-	claudeClient := claude.NewClient(claude.ClientConfig{
-		Model:    "test",
-		MaxTurns: 1,
-	})
-	claudeClient.SetCommandCreator(mockClaudeCreatorWithToolUse(
-		"## Progress\nMade edits\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!",
-		"Edit",
-	))
-
-	// Create mock jj client
-	jjClient := jj.NewClient("/tmp")
-	jjClient.SetCommandRunner(mockJJRunner())
-
-	// Create loop with max 2 iterations
-	loop := New(Config{
-		PlanID:        plan.ID,
-		MaxIterations: 2,
-		WorkDir:       "/tmp",
-	}, Deps{
-		DB:     database,
-		Claude: claudeClient,
-		JJ:     jjClient,
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	var events []Event
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for event := range loop.Events() {
-			events = append(events, event)
-		}
-	}()
-
-	err := loop.Run(ctx)
-	if err != nil {
-		t.Fatalf("loop.Run() error: %v", err)
-	}
-	wg.Wait()
-
-	// Should NOT trigger reviewer since DEV_DONE was ignored due to edits
-	var foundReviewerStart bool
-	for _, e := range events {
-		if e.Type == EventReviewerStart {
-			foundReviewerStart = true
-		}
-	}
-
-	if foundReviewerStart {
-		t.Error("reviewer should NOT start when DEV_DONE is ignored due to edits")
-	}
-
-	// Should hit max iterations
-	var foundMaxIter bool
-	for _, e := range events {
-		if e.Type == EventMaxIterations {
-			foundMaxIter = true
-		}
-	}
-	if !foundMaxIter {
-		t.Error("expected EventMaxIterations when DEV_DONE is ignored")
 	}
 }
 
@@ -1386,6 +1204,7 @@ func TestLoop_FeedbackIncludedInNextIteration(t *testing.T) {
 
 	// Track the prompt passed to Claude
 	var capturedPrompt string
+	feedbackCallCount := 0
 
 	// Create mock Claude client
 	claudeClient := claude.NewClient(claude.ClientConfig{
@@ -1393,13 +1212,22 @@ func TestLoop_FeedbackIncludedInNextIteration(t *testing.T) {
 		MaxTurns: 1,
 	})
 	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		feedbackCallCount++
 		// Capture the prompt from args (claude-code passes prompt via args)
 		for i, arg := range args {
 			if arg == "-p" && i+1 < len(args) {
 				capturedPrompt = args[i+1]
 			}
 		}
-		jsonOutput := createMockClaudeOutput("## Progress\nFixed security issue\n\n## Status\nRUNNING RUNNING RUNNING")
+		var output string
+		if feedbackCallCount == 1 {
+			// Developer output
+			output = "## Progress\nFixed security issue\n\n## Status\nRUNNING RUNNING RUNNING"
+		} else {
+			// Reviewer output (structured so parser doesn't extract entire output as feedback)
+			output = "## Progress\nReviewed WIP\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		}
+		jsonOutput := createMockClaudeOutput(output)
 		return exec.CommandContext(ctx, "echo", jsonOutput)
 	})
 
@@ -1428,7 +1256,7 @@ func TestLoop_FeedbackIncludedInNextIteration(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for event := range loop.Events() {
-			if event.Type == EventPromptBuilt && event.Prompt != "" {
+			if event.Type == EventPromptBuilt && event.Prompt != "" && promptFromEvent == "" {
 				promptFromEvent = event.Prompt
 			}
 		}
@@ -2137,6 +1965,123 @@ func TestLoop_ExtremeMode_TriggerOnIteration1(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Team Mode Tests
+// =============================================================================
+
+func TestLoop_TeamMode_DeveloperStartEventHasTeamMode(t *testing.T) {
+	// Verify that EventDeveloperStart has TeamMode=true when team mode is active
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nWorking\n\n## Status\nRUNNING RUNNING RUNNING"))
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		TeamMode:      true,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Find EventDeveloperStart and check TeamMode
+	var foundDevStart bool
+	for _, e := range events {
+		if e.Type == EventDeveloperStart {
+			foundDevStart = true
+			if !e.TeamMode {
+				t.Error("expected EventDeveloperStart.TeamMode=true when team mode is active")
+			}
+		}
+	}
+	if !foundDevStart {
+		t.Error("expected EventDeveloperStart event")
+	}
+}
+
+func TestLoop_TeamMode_DeveloperStartEventNoTeamMode(t *testing.T) {
+	// Verify that EventDeveloperStart has TeamMode=false when team mode is inactive
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(mockClaudeCreator("## Progress\nWorking\n\n## Status\nRUNNING RUNNING RUNNING"))
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunner())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		TeamMode:      false,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Find EventDeveloperStart and check TeamMode
+	for _, e := range events {
+		if e.Type == EventDeveloperStart {
+			if e.TeamMode {
+				t.Error("expected EventDeveloperStart.TeamMode=false when team mode is inactive")
+			}
+		}
+	}
+}
+
 func TestTruncateDiff(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2181,5 +2126,270 @@ func TestTruncateDiff(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Always-Review Model Tests
+// =============================================================================
+
+func TestLoop_MidWorkReviewFeedback(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// Developer: RUNNING (not done)
+			output = "## Progress\nWorking on feature\n\n## Status\nRUNNING RUNNING RUNNING"
+		} else if callCount == 2 {
+			// Reviewer: gives feedback during progress review
+			output = "## Progress\nReviewed WIP\n\n### Critical Issues\nNone\n\n### Major Issues\n- Architecture concern in handler.go\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_FEEDBACK: Fix architecture concern"
+		} else {
+			// Subsequent calls
+			output = "## Progress\nFixed issues\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should have reviewer feedback event
+	var foundFeedback bool
+	for _, e := range events {
+		if e.Type == EventReviewerFeedback {
+			foundFeedback = true
+		}
+	}
+	if !foundFeedback {
+		t.Error("expected EventReviewerFeedback during mid-work review")
+	}
+
+	// Should NOT have EventBothDone (dev didn't signal done)
+	var foundBothDone bool
+	for _, e := range events {
+		if e.Type == EventBothDone {
+			foundBothDone = true
+		}
+	}
+	if foundBothDone {
+		t.Error("should NOT have EventBothDone when developer is still RUNNING")
+	}
+
+	// Feedback should be stored
+	feedback, err := database.GetLatestReviewerFeedback(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get feedback: %v", err)
+	}
+	if feedback == nil {
+		t.Error("expected reviewer feedback to be stored during mid-work review")
+	} else if !strings.Contains(feedback.Content, "architecture concern") {
+		t.Errorf("expected feedback about architecture concern, got: %s", feedback.Content)
+	}
+}
+
+func TestLoop_MidWorkReviewApproves(t *testing.T) {
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// Developer: RUNNING
+			output = "## Progress\nWorking on feature\n\n## Status\nRUNNING RUNNING RUNNING"
+		} else if callCount == 2 {
+			// Reviewer: approves mid-work (looks good so far)
+			output = "## Progress\nReviewed WIP\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		} else {
+			output = "## Progress\nStill working\n\n## Status\nRUNNING RUNNING RUNNING"
+		}
+		jsonOutput := createMockClaudeOutput(output)
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 1,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should NOT have EventBothDone (dev didn't signal DEV_DONE)
+	var foundBothDone bool
+	for _, e := range events {
+		if e.Type == EventBothDone {
+			foundBothDone = true
+		}
+	}
+	if foundBothDone {
+		t.Error("should NOT exit when reviewer approves but dev didn't signal DEV_DONE")
+	}
+
+	// Should have max iterations (loop continued)
+	var foundMaxIter bool
+	for _, e := range events {
+		if e.Type == EventMaxIterations {
+			foundMaxIter = true
+		}
+	}
+	if !foundMaxIter {
+		t.Error("expected EventMaxIterations - loop should continue when dev hasn't signaled done")
+	}
+
+	// No reviewer feedback should be stored (reviewer approved)
+	feedback, err := database.GetLatestReviewerFeedback(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get feedback: %v", err)
+	}
+	if feedback != nil {
+		t.Error("no feedback should be stored when reviewer approves mid-work")
+	}
+}
+
+func TestLoop_EditsWithDevDoneNoGuard(t *testing.T) {
+	// With the always-review model, edits don't block DEV_DONE from reaching the reviewer.
+	database := setupTestDB(t)
+	plan := createTestPlan(t, database, "Test plan content")
+
+	callCount := 0
+
+	claudeClient := claude.NewClient(claude.ClientConfig{
+		Model:    "test",
+		MaxTurns: 1,
+	})
+	claudeClient.SetCommandCreator(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		callCount++
+		var output string
+		if callCount == 1 {
+			// Developer: uses Edit tool AND signals DEV_DONE
+			output = "## Progress\nCompleted\n\n## Status\nDEV_DONE DEV_DONE DEV_DONE!!!"
+		} else {
+			// Reviewer: approves
+			output = "## Progress\nReviewed\n\n### Critical Issues\nNone\n\n### Major Issues\nNone\n\n### Minor Issues\nNone\n\n### Verdict\nREVIEWER_APPROVED REVIEWER_APPROVED!!!"
+		}
+		jsonOutput := createMockClaudeOutputWithToolUse(output, "Edit")
+		return exec.CommandContext(ctx, "echo", jsonOutput)
+	})
+
+	jjClient := jj.NewClient("/tmp")
+	jjClient.SetCommandRunner(mockJJRunnerEmpty())
+
+	loop := New(Config{
+		PlanID:        plan.ID,
+		MaxIterations: 100,
+		WorkDir:       "/tmp",
+	}, Deps{
+		DB:     database,
+		Claude: claudeClient,
+		JJ:     jjClient,
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var events []Event
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for event := range loop.Events() {
+			events = append(events, event)
+		}
+	}()
+
+	err := loop.Run(ctx)
+	if err != nil {
+		t.Fatalf("loop.Run() error: %v", err)
+	}
+	wg.Wait()
+
+	// Should have EventBothDone - edits no longer block DEV_DONE
+	var foundBothDone bool
+	for _, e := range events {
+		if e.Type == EventBothDone {
+			foundBothDone = true
+		}
+	}
+	if !foundBothDone {
+		t.Error("expected EventBothDone - edits should NOT block DEV_DONE in always-review model")
+	}
+
+	// Plan should be completed
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status != db.PlanStatusCompleted {
+		t.Errorf("expected plan status 'completed', got: %s", updatedPlan.Status)
 	}
 }

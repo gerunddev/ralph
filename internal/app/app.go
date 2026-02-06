@@ -54,6 +54,9 @@ type Config struct {
 
 	// ExtremeMode enables extreme mode (+3 iterations after both done).
 	ExtremeMode bool
+
+	// TeamMode enables agent teams for the developer phase.
+	TeamMode bool
 }
 
 // New creates a new App.
@@ -238,16 +241,33 @@ func (a *App) loadPlan(planID string) error {
 
 // createLoop creates a new loop instance with the current plan and dependencies.
 func (a *App) createLoop() {
+	deps := loop.Deps{
+		DB:     a.db,
+		Claude: a.claude,
+		JJ:     a.jj,
+	}
+
+	// In team mode, create a separate Claude client with agent teams env var
+	if a.appCfg.TeamMode {
+		deps.TeamClaude = claude.NewClient(claude.ClientConfig{
+			Model:    a.cfg.Claude.Model,
+			MaxTurns: a.cfg.Claude.MaxTurns,
+			Verbose:  a.cfg.Claude.Verbose,
+			EnvVars:  []string{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1"},
+		})
+		// If there's a test override, also apply it to the team client
+		if a.claudeOverride != nil {
+			deps.TeamClaude = a.claudeOverride
+		}
+	}
+
 	a.loop = loop.New(loop.Config{
 		PlanID:        a.plan.ID,
 		MaxIterations: a.cfg.MaxIterations,
 		ExtremeMode:   a.appCfg.ExtremeMode,
+		TeamMode:      a.appCfg.TeamMode,
 		WorkDir:       a.workDir,
-	}, loop.Deps{
-		DB:     a.db,
-		Claude: a.claude,
-		JJ:     a.jj,
-	})
+	}, deps)
 }
 
 // runLoopHeadless runs the loop without TUI and collects the result.

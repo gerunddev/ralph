@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"sync"
@@ -24,7 +25,8 @@ var (
 type ClientConfig struct {
 	Model    string
 	MaxTurns int
-	Verbose  bool // Enable verbose output from Claude CLI
+	Verbose  bool     // Enable verbose output from Claude CLI
+	EnvVars  []string // Additional environment variables (KEY=VALUE format)
 }
 
 // Client wraps the Claude CLI for executing agent sessions.
@@ -32,6 +34,7 @@ type Client struct {
 	model    string
 	maxTurns int
 	verbose  bool
+	envVars  []string // Additional environment variables
 
 	// CommandRunner allows overriding command creation for testing.
 	// When set, it's called to create the exec.Cmd instead of the default.
@@ -53,6 +56,7 @@ func NewClient(cfg ClientConfig) *Client {
 		model:          cfg.Model,
 		maxTurns:       cfg.MaxTurns,
 		verbose:        cfg.Verbose,
+		envVars:        cfg.EnvVars,
 		commandCreator: defaultCommandCreator,
 	}
 }
@@ -106,6 +110,11 @@ func (c *Client) Run(ctx context.Context, prompt string) (*Session, error) {
 
 	// Create the command
 	cmd := c.commandCreator(ctx, "claude", args...)
+
+	// Set additional environment variables if configured
+	if len(c.envVars) > 0 {
+		cmd.Env = append(os.Environ(), c.envVars...)
+	}
 
 	// Set up stdout pipe for streaming
 	stdout, err := cmd.StdoutPipe()

@@ -104,7 +104,7 @@ func (h Header) renderStatus() string {
 	switch strings.ToLower(status) {
 	case "running", "in progress":
 		return statusRunningStyle.Render(status)
-	case "developing":
+	case "developing", "developing (team)":
 		return statusDevelopingStyle.Render(status)
 	case "reviewing":
 		return statusReviewingStyle.Render(status)

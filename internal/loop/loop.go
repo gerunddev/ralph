@@ -42,20 +42,8 @@ func truncateDiff(diff string) string {
 		" bytes omitted. Review may be incomplete for large changes.]"
 }
 
-// editToolNames contains tool names that indicate file modifications.
-var editToolNames = map[string]bool{
-	"Edit":         true,
-	"Write":        true,
-	"NotebookEdit": true,
-}
-
-// isEditTool returns true if the tool name indicates a file editing operation.
-func isEditTool(name string) bool {
-	return editToolNames[name]
-}
-
 // sanitizeDoneMarker removes the DONE marker from text.
-// Used when DONE is rejected due to edits but we still need to save progress/learnings.
+// Used to prevent done markers from appearing in stored progress/learnings.
 func sanitizeDoneMarker(s string) string {
 	return strings.ReplaceAll(s, parser.DoneMarker, "")
 }
@@ -70,15 +58,17 @@ type Config struct {
 	PlanID          string
 	MaxIterations   int
 	ExtremeMode     bool   // Enable extreme mode (+3 iterations after both done)
+	TeamMode        bool   // Enable agent teams for developer phase
 	WorkDir         string // For jj operations
 	EventBufferSize int    // Size of event channel buffer (default: 1000)
 }
 
 // Deps holds dependencies for the loop.
 type Deps struct {
-	DB     *db.DB
-	Claude *claude.Client // Main model for development
-	JJ     *jj.Client
+	DB         *db.DB
+	Claude     *claude.Client // Default Claude client (used for reviewer, and developer when not in team mode)
+	TeamClaude *claude.Client // Claude client with team env vars (used for developer in team mode; nil when not in team mode)
+	JJ         *jj.Client
 }
 
 // Loop orchestrates the main execution loop for Ralph.
@@ -278,9 +268,11 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	}
 
 	// 2. Run developer agent
-	l.emit(NewEvent(EventDeveloperStart, l.iteration, l.effectiveMaxIter(), "Starting developer agent"))
+	devStartEvent := NewEvent(EventDeveloperStart, l.iteration, l.effectiveMaxIter(), "Starting developer agent")
+	devStartEvent.TeamMode = l.cfg.TeamMode
+	l.emit(devStartEvent)
 
-	devOutput, devHadEdits, devSessionID, err := l.runDeveloper(ctx, progress, learnings, feedback)
+	devOutput, devSessionID, err := l.runDeveloper(ctx, progress, learnings, feedback)
 	if err != nil {
 		return false, fmt.Errorf("developer agent failed: %w", err)
 	}
@@ -300,23 +292,13 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 		}
 	}
 
-	// 6. Check developer done status
-	if !devResult.DevDone || devHadEdits {
-		// Developer still working (or had edits), commit and continue
-		if devHadEdits && devResult.DevDone {
-			log.Info("ignoring DEV_DONE because session contained file edits",
-				"iteration", l.iteration)
-		}
-		l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
-			fmt.Sprintf("Developer iteration %d complete, continuing", l.iteration)))
-		return false, nil
+	// 6. Emit developer done event if applicable (for UI)
+	if devResult.DevDone {
+		l.emit(NewEvent(EventDeveloperDone, l.iteration, l.effectiveMaxIter(),
+			"Developer signaled DEV_DONE, triggering final review"))
 	}
 
-	// Developer done without edits - run reviewer
-	l.emit(NewEvent(EventDeveloperDone, l.iteration, l.effectiveMaxIter(),
-		"Developer signaled DEV_DONE, triggering reviewer"))
-
-	// 7. Get diff for reviewer - use cumulative diff from base change, not just current change
+	// 7. Get diff for reviewer - use cumulative diff from base change
 	var diff string
 	if l.baseChangeID != "" {
 		log.Debug("getting cumulative diff for reviewer", "baseChangeID", l.baseChangeID)
@@ -328,7 +310,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Warn("cumulative diff is empty despite having baseChangeID",
 				"baseChangeID", l.baseChangeID,
 				"hint", "changes may have been squashed, rebased, or committed before loop started")
-			// Set a note for the reviewer about this edge case
 			diff = "[Note: Cumulative diff from base change " + l.baseChangeID +
 				" is empty. This may occur if changes were squashed/rebased, or if all work " +
 				"was committed before the loop captured the base change. Review the Developer " +
@@ -337,11 +318,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Debug("got cumulative diff for reviewer", "diffLen", len(diff), "diffPreview", truncateString(diff, 200))
 		}
 	} else {
-		// Fallback to jj show if we don't have a base change ID.
-		// This happens when starting from a root commit (no parent to diff against).
-		// LIMITATION: This only shows the current change's diff, not cumulative work
-		// across multiple changes. If developer created multiple changes before DEV_DONE,
-		// earlier changes will not be included in this review.
 		log.Warn("no baseChangeID available, falling back to jj show (single change only)",
 			"limitation", "review will only include current change, not cumulative session work")
 		diff, err = l.deps.JJ.Show(ctx)
@@ -349,7 +325,6 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 			log.Warn("failed to get diff for reviewer", "error", err)
 			diff = ""
 		} else if strings.TrimSpace(diff) != "" {
-			// Prepend a note about the limitation
 			diff = "[Note: This diff shows only the current jj change. If work spanned " +
 				"multiple changes, earlier changes are not included in this review.]\n\n" + diff
 		}
@@ -363,10 +338,10 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 		diff = truncateDiff(diff)
 	}
 
-	// 8. Run reviewer agent
+	// 8. Run reviewer agent (always — pass devDone flag for prompt mode)
 	l.emit(NewEvent(EventReviewerStart, l.iteration, l.effectiveMaxIter(), "Starting reviewer agent"))
 
-	reviewOutput, reviewSessionID, err := l.runReviewer(ctx, progress, learnings, diff, devOutput)
+	reviewOutput, reviewSessionID, err := l.runReviewer(ctx, progress, learnings, diff, devOutput, devResult.DevDone)
 	if err != nil {
 		return false, fmt.Errorf("reviewer agent failed: %w", err)
 	}
@@ -379,27 +354,26 @@ func (l *Loop) runIteration(ctx context.Context) (bool, error) {
 	// 10. Store reviewer progress/learnings
 	l.storeProgressLearnings(reviewSessionID, reviewResult.Progress, reviewResult.Learnings)
 
-	// 11. Check reviewer verdict
-	if reviewResult.ReviewerApproved {
-		// BOTH voted DONE - complete!
+	// 11. Check: if DEV_DONE && REVIEWER_APPROVED → done
+	if devResult.DevDone && reviewResult.ReviewerApproved {
 		l.emit(NewEvent(EventReviewerApproved, l.iteration, l.effectiveMaxIter(),
 			"Reviewer approved - implementation complete"))
 		l.emit(NewEvent(EventBothDone, l.iteration, l.effectiveMaxIter(),
 			"Both developer and reviewer approved"))
-
 		return true, nil
 	}
 
-	// 12. Reviewer has feedback - store for next iteration
-	l.emit(NewEvent(EventReviewerFeedback, l.iteration, l.effectiveMaxIter(),
-		fmt.Sprintf("Reviewer feedback: %s", truncateString(reviewResult.ReviewerFeedback, 100))))
-
-	if err := l.storeReviewerFeedback(reviewSessionID, reviewResult.ReviewerFeedback); err != nil {
-		log.Warn("failed to store reviewer feedback", "error", err)
+	// 12. If reviewer has feedback, store for next iteration
+	if reviewResult.ReviewerFeedback != "" {
+		l.emit(NewEvent(EventReviewerFeedback, l.iteration, l.effectiveMaxIter(),
+			fmt.Sprintf("Reviewer feedback: %s", truncateString(reviewResult.ReviewerFeedback, 100))))
+		if err := l.storeReviewerFeedback(reviewSessionID, reviewResult.ReviewerFeedback); err != nil {
+			log.Warn("failed to store reviewer feedback", "error", err)
+		}
 	}
 
 	l.emit(NewEvent(EventIterationEnd, l.iteration, l.effectiveMaxIter(),
-		fmt.Sprintf("iteration %d complete with reviewer feedback", l.iteration)))
+		fmt.Sprintf("iteration %d complete", l.iteration)))
 
 	return false, nil
 }
@@ -433,17 +407,18 @@ func (l *Loop) loadState() (progress, learnings, feedback string, err error) {
 	return progress, learnings, feedback, nil
 }
 
-// runDeveloper runs the developer agent and returns output, whether edits occurred, and session ID.
-func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback string) (output string, hadEdits bool, sessionID string, err error) {
+// runDeveloper runs the developer agent and returns output and session ID.
+func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback string) (output string, sessionID string, err error) {
 	// Build developer prompt
 	prompt, err := agent.BuildDeveloperPrompt(agent.DeveloperContext{
 		PlanContent:      l.plan.Content,
 		Progress:         progress,
 		Learnings:        learnings,
 		ReviewerFeedback: feedback,
+		TeamMode:         l.cfg.TeamMode,
 	})
 	if err != nil {
-		return "", false, "", fmt.Errorf("failed to build developer prompt: %w", err)
+		return "", "", fmt.Errorf("failed to build developer prompt: %w", err)
 	}
 
 	l.emit(NewPromptBuiltEvent(l.iteration, l.effectiveMaxIter(), prompt))
@@ -459,20 +434,26 @@ func (l *Loop) runDeveloper(ctx context.Context, progress, learnings, feedback s
 		AgentType:   db.LoopAgentDeveloper,
 	}
 	if err := l.deps.DB.CreatePlanSession(session); err != nil {
-		return "", false, "", fmt.Errorf("failed to create developer session: %w", err)
+		return "", "", fmt.Errorf("failed to create developer session: %w", err)
+	}
+
+	// Select Claude client: use team client for developer in team mode
+	devClient := l.deps.Claude
+	if l.cfg.TeamMode && l.deps.TeamClaude != nil {
+		devClient = l.deps.TeamClaude
 	}
 
 	// Run Claude session
-	output, hadEdits, err = l.runClaudeSession(ctx, sessionID, prompt)
+	output, err = l.runClaudeSession(ctx, sessionID, prompt, devClient)
 	if err != nil {
-		return "", false, sessionID, err
+		return "", sessionID, err
 	}
 
-	return output, hadEdits, sessionID, nil
+	return output, sessionID, nil
 }
 
 // runReviewer runs the reviewer agent and returns output and session ID.
-func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSummary string) (output string, sessionID string, err error) {
+func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSummary string, devDone bool) (output string, sessionID string, err error) {
 	// Build reviewer prompt
 	prompt, err := agent.BuildReviewerPrompt(agent.ReviewerContext{
 		PlanContent:      l.plan.Content,
@@ -480,6 +461,7 @@ func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSu
 		Learnings:        learnings,
 		DiffOutput:       diff,
 		DeveloperSummary: devSummary,
+		DevSignaledDone:  devDone,
 	})
 	if err != nil {
 		return "", "", fmt.Errorf("failed to build reviewer prompt: %w", err)
@@ -501,8 +483,8 @@ func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSu
 		return "", "", fmt.Errorf("failed to create reviewer session: %w", err)
 	}
 
-	// Run Claude session (reviewer doesn't track edits)
-	output, _, err = l.runClaudeSession(ctx, sessionID, prompt)
+	// Run Claude session (reviewer always uses the default client, never team client)
+	output, err = l.runClaudeSession(ctx, sessionID, prompt, l.deps.Claude)
 	if err != nil {
 		return "", sessionID, err
 	}
@@ -510,16 +492,16 @@ func (l *Loop) runReviewer(ctx context.Context, progress, learnings, diff, devSu
 	return output, sessionID, nil
 }
 
-// runClaudeSession runs a Claude session and returns the output and whether edits occurred.
-func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (output string, hadEdits bool, err error) {
+// runClaudeSession runs a Claude session and returns the output.
+func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string, client *claude.Client) (output string, err error) {
 	l.emit(NewEvent(EventClaudeStart, l.iteration, l.effectiveMaxIter(), "Starting Claude session"))
 
-	claudeSession, err := l.deps.Claude.Run(ctx, prompt)
+	claudeSession, err := client.Run(ctx, prompt)
 	if err != nil {
 		if dbErr := l.deps.DB.CompletePlanSession(sessionID, db.PlanSessionFailed, ""); dbErr != nil {
 			log.Warn("failed to mark session as failed", "error", dbErr)
 		}
-		return "", false, fmt.Errorf("failed to start Claude: %w", err)
+		return "", fmt.Errorf("failed to start Claude: %w", err)
 	}
 
 	// Stream events and collect output
@@ -552,13 +534,6 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 					fmt.Sprintf("Context limit reached: %.1f%% (%d/%d tokens)", percentage, totalTokens, maxContext)))
 				claudeSession.Cancel()
 				// Continue to drain remaining events from the channel
-			}
-		}
-
-		// Track if any edit tools are used
-		if claudeEvent.Type == claude.EventToolUse && claudeEvent.ToolUse != nil {
-			if isEditTool(claudeEvent.ToolUse.Name) {
-				hadEdits = true
 			}
 		}
 
@@ -599,7 +574,7 @@ func (l *Loop) runClaudeSession(ctx context.Context, sessionID, prompt string) (
 		log.Warn("failed to complete session", "error", err)
 	}
 
-	return output, hadEdits, nil
+	return output, nil
 }
 
 // storeProgressLearnings stores progress and learnings from an agent session.

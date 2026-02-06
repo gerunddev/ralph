@@ -497,6 +497,14 @@ func TestBuildDeveloperPrompt_AllFieldsPopulated(t *testing.T) {
 	if strings.Contains(result, "# Reviewer Feedback") {
 		t.Error("should not show reviewer feedback section when empty")
 	}
+
+	// Should NOT contain old review-only session text
+	if strings.Contains(result, "review-only session") {
+		t.Error("should not contain old review-only session text")
+	}
+	if strings.Contains(result, "If you edited files this cycle") {
+		t.Error("should not contain old file-edit cycle text")
+	}
 }
 
 func TestBuildDeveloperPrompt_WithReviewerFeedback(t *testing.T) {
@@ -600,6 +608,7 @@ func TestBuildReviewerPrompt_AllFieldsPopulated(t *testing.T) {
 		Learnings:        "Uses Go patterns",
 		DiffOutput:       "+ func NewUser() {}\n- func OldUser() {}",
 		DeveloperSummary: "Added user creation endpoint",
+		DevSignaledDone:  true,
 	}
 
 	result, err := BuildReviewerPrompt(ctx)
@@ -607,12 +616,17 @@ func TestBuildReviewerPrompt_AllFieldsPopulated(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Check reviewer-specific instructions
+	// Check reviewer-specific instructions (final review mode)
 	if !strings.Contains(result, "VERY HARD CRITIC") {
 		t.Error("missing very hard critic instruction")
 	}
 	if !strings.Contains(result, "ONLY approve") {
 		t.Error("missing strict approval criteria")
+	}
+
+	// Should NOT contain progress review instructions
+	if strings.Contains(result, "reviewing work in progress") {
+		t.Error("should not contain progress review instructions in final review mode")
 	}
 
 	// Check approval/feedback markers
@@ -720,10 +734,11 @@ func TestBuildReviewerPrompt_Fallbacks(t *testing.T) {
 
 func TestBuildReviewerPrompt_ZeroIssuesApproval(t *testing.T) {
 	ctx := ReviewerContext{
-		PlanContent: "Test plan",
-		Progress:    "Complete",
-		Learnings:   "Done",
-		DiffOutput:  "some changes",
+		PlanContent:     "Test plan",
+		Progress:        "Complete",
+		Learnings:       "Done",
+		DiffOutput:      "some changes",
+		DevSignaledDone: true,
 	}
 
 	result, err := BuildReviewerPrompt(ctx)
@@ -782,12 +797,212 @@ func TestReviewerPromptTemplate_IsValid(t *testing.T) {
 			t.Errorf("ReviewerPromptTemplate missing required variable: %s", v)
 		}
 	}
+
+	// Verify DevSignaledDone conditional is present
+	if !strings.Contains(ReviewerPromptTemplate, "{{if .DevSignaledDone}}") {
+		t.Error("ReviewerPromptTemplate missing DevSignaledDone conditional")
+	}
+}
+
+func TestBuildReviewerPrompt_ProgressReviewMode(t *testing.T) {
+	ctx := ReviewerContext{
+		PlanContent:      "Build a REST API",
+		Progress:         "In progress",
+		Learnings:        "Learning things",
+		DiffOutput:       "+ func NewUser() {}",
+		DeveloperSummary: "Working on user endpoint",
+		DevSignaledDone:  false,
+	}
+
+	result, err := BuildReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain progress review instructions
+	if !strings.Contains(result, "reviewing work in progress") {
+		t.Error("missing 'reviewing work in progress' instruction")
+	}
+	if !strings.Contains(result, "still working on the plan") {
+		t.Error("missing 'still working on the plan' instruction")
+	}
+	if !strings.Contains(result, "What NOT to Flag") {
+		t.Error("missing 'What NOT to Flag' section")
+	}
+
+	// Should NOT contain final review instructions
+	if strings.Contains(result, "VERY HARD CRITIC") {
+		t.Error("should not contain 'VERY HARD CRITIC' in progress review mode")
+	}
+	if strings.Contains(result, "EXTREMELY thorough") {
+		t.Error("should not contain 'EXTREMELY thorough' in progress review mode")
+	}
+
+	// Should still have approval/feedback markers
+	if !strings.Contains(result, "REVIEWER_APPROVED REVIEWER_APPROVED!!!") {
+		t.Error("missing REVIEWER_APPROVED marker")
+	}
+	if !strings.Contains(result, "REVIEWER_FEEDBACK:") {
+		t.Error("missing REVIEWER_FEEDBACK marker")
+	}
+
+	// Should still have Diff to Review section
+	if !strings.Contains(result, "# Diff to Review") {
+		t.Error("missing Diff to Review header")
+	}
+}
+
+func TestBuildReviewerPrompt_FinalReviewMode(t *testing.T) {
+	ctx := ReviewerContext{
+		PlanContent:      "Build a REST API",
+		Progress:         "Complete",
+		Learnings:        "All done",
+		DiffOutput:       "+ func NewUser() {}",
+		DeveloperSummary: "Finished user endpoint",
+		DevSignaledDone:  true,
+	}
+
+	result, err := BuildReviewerPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain final review instructions
+	if !strings.Contains(result, "VERY HARD CRITIC") {
+		t.Error("missing 'VERY HARD CRITIC' instruction")
+	}
+	if !strings.Contains(result, "EXTREMELY thorough") {
+		t.Error("missing 'EXTREMELY thorough' instruction")
+	}
+	if !strings.Contains(result, "Zero critical issues") {
+		t.Error("missing zero tolerance criteria")
+	}
+	if !strings.Contains(result, "Zero major issues") {
+		t.Error("missing zero tolerance criteria")
+	}
+	if !strings.Contains(result, "Zero minor issues") {
+		t.Error("missing zero tolerance criteria")
+	}
+
+	// Should NOT contain progress review instructions
+	if strings.Contains(result, "reviewing work in progress") {
+		t.Error("should not contain progress review instructions in final review mode")
+	}
+
+	// Should still have approval/feedback markers
+	if !strings.Contains(result, "REVIEWER_APPROVED REVIEWER_APPROVED!!!") {
+		t.Error("missing REVIEWER_APPROVED marker")
+	}
+	if !strings.Contains(result, "REVIEWER_FEEDBACK:") {
+		t.Error("missing REVIEWER_FEEDBACK marker")
+	}
+}
+
+func TestReviewerPromptTemplate_DevSignaledDoneVariable(t *testing.T) {
+	// Verify the template contains the DevSignaledDone conditional
+	if !strings.Contains(ReviewerPromptTemplate, "{{if .DevSignaledDone}}") {
+		t.Error("ReviewerPromptTemplate missing {{if .DevSignaledDone}} conditional")
+	}
+}
+
+// =============================================================================
+// Team Mode Prompt Tests
+// =============================================================================
+
+func TestBuildDeveloperPrompt_TeamModeEnabled(t *testing.T) {
+	ctx := DeveloperContext{
+		PlanContent: "Build a REST API",
+		Progress:    "Started",
+		Learnings:   "Learning",
+		TeamMode:    true,
+	}
+
+	result, err := BuildDeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain team mode section
+	if !strings.Contains(result, "# Team Mode") {
+		t.Error("missing Team Mode header when TeamMode is true")
+	}
+	if !strings.Contains(result, "agent teams enabled") {
+		t.Error("missing agent teams instruction")
+	}
+	if !strings.Contains(result, "parallel") {
+		t.Error("missing parallel tasks instruction")
+	}
+	if !strings.Contains(result, "file ownership") {
+		t.Error("missing file ownership instruction")
+	}
+	if !strings.Contains(result, "DEV_DONE only when ALL teammates") {
+		t.Error("missing DEV_DONE semantics for team mode")
+	}
+	if !strings.Contains(result, "edit conflict") {
+		t.Error("missing edit conflict handling instruction")
+	}
+}
+
+func TestBuildDeveloperPrompt_TeamModeDisabled(t *testing.T) {
+	ctx := DeveloperContext{
+		PlanContent: "Build a REST API",
+		Progress:    "Started",
+		Learnings:   "Learning",
+		TeamMode:    false,
+	}
+
+	result, err := BuildDeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT contain team mode section
+	if strings.Contains(result, "# Team Mode") {
+		t.Error("should not show Team Mode section when TeamMode is false")
+	}
+	if strings.Contains(result, "agent teams enabled") {
+		t.Error("should not show agent teams instruction when TeamMode is false")
+	}
+}
+
+func TestBuildDeveloperPrompt_TeamModeWithFeedback(t *testing.T) {
+	ctx := DeveloperContext{
+		PlanContent:      "Build a REST API",
+		Progress:         "Started",
+		Learnings:        "Learning",
+		ReviewerFeedback: "Fix the auth bug",
+		TeamMode:         true,
+	}
+
+	result, err := BuildDeveloperPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain BOTH team mode and reviewer feedback
+	if !strings.Contains(result, "# Team Mode") {
+		t.Error("missing Team Mode section")
+	}
+	if !strings.Contains(result, "# Reviewer Feedback") {
+		t.Error("missing Reviewer Feedback section")
+	}
+	if !strings.Contains(result, "Fix the auth bug") {
+		t.Error("missing reviewer feedback content")
+	}
+}
+
+func TestDeveloperPromptTemplate_TeamModeVariable(t *testing.T) {
+	// Verify the template contains the TeamMode conditional
+	if !strings.Contains(DeveloperPromptTemplate, "{{if .TeamMode}}") {
+		t.Error("DeveloperPromptTemplate missing TeamMode conditional")
+	}
 }
 
 func TestReviewerPromptNoVCSCommands(t *testing.T) {
 	ctx := ReviewerContext{
-		PlanContent: "test plan",
-		DiffOutput:  "test diff",
+		PlanContent:     "test plan",
+		DiffOutput:      "test diff",
+		DevSignaledDone: true,
 	}
 	prompt, err := BuildReviewerPrompt(ctx)
 	if err != nil {

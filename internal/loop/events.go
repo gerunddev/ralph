@@ -64,6 +64,7 @@ type Event struct {
 	Output      string              // For EventClaudeOutput events (final collected output)
 	ClaudeEvent *claude.StreamEvent // For EventClaudeStream events
 	Error       error
+	TeamMode    bool // Whether team mode is active (for EventDeveloperStart)
 }
 
 // NewEvent creates a new loop event with the given type and message.
