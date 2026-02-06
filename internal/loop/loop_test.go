@@ -2146,7 +2146,7 @@ func TestTruncateDiff(t *testing.T) {
 		},
 		{
 			name:      "large diff truncated",
-			input:     strings.Repeat("x", 200*1024), // 200KB
+			input:     strings.Repeat("x", maxDiffBytes*2),
 			wantTrunc: true,
 		},
 		{

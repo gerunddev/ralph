@@ -20,8 +20,9 @@ import (
 
 // maxDiffBytes is the maximum size of diff to include in reviewer prompt.
 // Large diffs can exhaust the context window before the reviewer even starts.
-// 100KB is ~25k tokens, leaving plenty of room for the prompt and response.
-const maxDiffBytes = 100 * 1024
+// 256KB is ~64k tokens, leaving ~136k tokens for the prompt and response
+// with 200k context window models.
+const maxDiffBytes = 256 * 1024
 
 // truncateDiff limits diff size to prevent context window exhaustion.
 // Returns the original diff if under limit, otherwise truncates with a message.
