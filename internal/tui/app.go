@@ -308,14 +308,16 @@ func (m *Model) handleLoopEvent(event loop.Event) {
 		doneMsg := doneMarkerStyle.Render("✓ DONE DONE DONE!!!")
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", doneMsg))
 		// Show completion floating window with summary
-		m.showCompletionWindow()
+		m.showSummaryWindow("✓ Completed", colorGreen, "Completed")
 
 	case loop.EventMaxIterations:
 		m.completed = true
-		m.status = "Max Iterations"
-		m.header.SetStatus("Max Iterations")
-		maxIterMsg := statusFailedStyle.Render(fmt.Sprintf("⚠ %s", event.Message))
+		m.status = "Stopped"
+		m.header.SetStatus("Stopped")
+		maxIterMsg := statusStoppedStyle.Render(fmt.Sprintf("■ %s", event.Message))
 		m.feedPanel.AppendLine(fmt.Sprintf("\n%s", maxIterMsg))
+		// Show summary floating window
+		m.showSummaryWindow("■ Stopped - Iteration Limit", colorYellow, "Stopped")
 
 	case loop.EventExtremeModeTriggered:
 		extremeMsg := systemMessageStyle.Render(fmt.Sprintf("Extreme mode: %s", event.Message))
@@ -473,21 +475,27 @@ func (m *Model) updateLayout() {
 	m.floatingWindow.SetSize(m.width, m.height)
 }
 
-// showCompletionWindow displays the floating window with a completion summary.
-func (m *Model) showCompletionWindow() {
+// showSummaryWindow displays the floating window with a summary.
+// verb is the action word (e.g. "Completed", "Stopped").
+func (m *Model) showSummaryWindow(title string, borderColor lipgloss.Color, verb string) {
+	m.floatingWindow.SetTitle(title)
+	m.floatingWindow.SetBorderColor(borderColor)
+
 	var summary strings.Builder
 
 	// Calculate duration
 	duration := time.Since(m.startTime)
 	durationStr := formatDuration(duration)
 
-	summary.WriteString(fmt.Sprintf("Completed in %d iteration(s) (%s)\n\n", m.iteration, durationStr))
+	summary.WriteString(fmt.Sprintf("%s after %d iteration(s) (%s)\n\n", verb, m.iteration, durationStr))
 
 	if m.lastProgress != "" {
 		summary.WriteString("## Summary\n")
 		summary.WriteString(m.lastProgress)
-	} else {
+	} else if verb == "Completed" {
 		summary.WriteString("Task completed successfully.")
+	} else {
+		summary.WriteString("No progress summary available.")
 	}
 
 	m.floatingWindow.Show(summary.String())

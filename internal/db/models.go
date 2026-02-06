@@ -135,6 +135,7 @@ const (
 	PlanStatusRunning   PlanStatus = "running"
 	PlanStatusCompleted PlanStatus = "completed"
 	PlanStatusFailed    PlanStatus = "failed"
+	PlanStatusStopped   PlanStatus = "stopped"
 )
 
 // PlanSessionStatus represents the status of a plan session.

@@ -10,12 +10,13 @@ import (
 
 // FloatingWindow is a centered modal overlay for displaying completion summaries.
 type FloatingWindow struct {
-	Title    string
-	Content  string
-	viewport viewport.Model
-	visible  bool
-	width    int
-	height   int
+	Title       string
+	Content     string
+	viewport    viewport.Model
+	visible     bool
+	width       int
+	height      int
+	borderColor lipgloss.Color
 }
 
 // NewFloatingWindow creates a new floating window.
@@ -25,6 +26,16 @@ func NewFloatingWindow(title string) FloatingWindow {
 		Title:    title,
 		viewport: vp,
 	}
+}
+
+// SetTitle sets the floating window title dynamically.
+func (f *FloatingWindow) SetTitle(title string) {
+	f.Title = title
+}
+
+// SetBorderColor sets the floating window border and title color.
+func (f *FloatingWindow) SetBorderColor(color lipgloss.Color) {
+	f.borderColor = color
 }
 
 // SetSize sets the available screen size for centering calculations.
@@ -112,12 +123,20 @@ func (f FloatingWindow) View() string {
 		windowHeight = 30
 	}
 
+	// Build styles (use custom border color if set)
+	winStyle := floatingWindowStyle
+	titleStyle := floatingTitleStyle
+	if f.borderColor != "" {
+		winStyle = winStyle.BorderForeground(f.borderColor)
+		titleStyle = titleStyle.Foreground(f.borderColor)
+	}
+
 	// Get frame size dynamically
-	frameH, _ := floatingWindowStyle.GetFrameSize()
+	frameH, _ := winStyle.GetFrameSize()
 	contentWidth := windowWidth - frameH
 
 	// Title line
-	title := floatingTitleStyle.Render(f.Title)
+	title := titleStyle.Render(f.Title)
 
 	// Key hints for the floating window
 	hints := helpKeyStyle.Render("↑↓") + helpDescStyle.Render(":scroll") +
@@ -140,7 +159,7 @@ func (f FloatingWindow) View() string {
 	content := titleLine + "\n" + viewportContent
 
 	// Apply style with safety cap
-	windowStyle := floatingWindowStyle.Width(contentWidth).MaxHeight(windowHeight)
+	windowStyle := winStyle.Width(contentWidth).MaxHeight(windowHeight)
 	window := windowStyle.Render(content)
 
 	// Calculate centering offsets

@@ -176,11 +176,173 @@ func TestModel_HandleLoopEvent_MaxIterations(t *testing.T) {
 		t.Error("expected completed to be true")
 	}
 
-	if m.status != "Max Iterations" {
-		t.Errorf("expected status 'Max Iterations', got '%s'", m.status)
+	if m.status != "Stopped" {
+		t.Errorf("expected status 'Stopped', got '%s'", m.status)
+	}
+
+	// Floating window should be visible with summary
+	if !m.floatingWindow.IsVisible() {
+		t.Error("expected floating window to be visible after max iterations")
 	}
 
 	close(events)
+}
+
+func TestModel_HandleLoopEvent_MaxIterations_ShowsSummary(t *testing.T) {
+	events := make(chan loop.Event, 10)
+	m := NewModelWithEvents(events)
+	m = updateModel(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	// Feed progress data first
+	outputEvent := loop.Event{
+		Type:      loop.EventClaudeOutput,
+		Iteration: 5,
+		MaxIter:   5,
+		Output:    "## Progress\nImplemented auth module\n\n## Learnings\nUsed JWT pattern",
+	}
+	m.handleLoopEvent(outputEvent)
+
+	// Trigger max iterations
+	maxIterEvent := loop.Event{
+		Type:      loop.EventMaxIterations,
+		Iteration: 5,
+		MaxIter:   5,
+		Message:   "Reached max iterations (5)",
+	}
+	m.handleLoopEvent(maxIterEvent)
+
+	// Floating window should be visible with progress content
+	if !m.floatingWindow.IsVisible() {
+		t.Error("expected floating window to be visible")
+	}
+
+	view := m.floatingWindow.View()
+	if !strings.Contains(view, "Implemented auth module") {
+		t.Errorf("expected floating window to contain progress summary, got '%s'", view)
+	}
+
+	close(events)
+}
+
+func TestModel_HandleLoopEvent_MaxIterations_StoppedTitle(t *testing.T) {
+	events := make(chan loop.Event, 10)
+	m := NewModelWithEvents(events)
+	m = updateModel(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	event := loop.Event{
+		Type:      loop.EventMaxIterations,
+		Iteration: 3,
+		MaxIter:   3,
+		Message:   "Reached max iterations (3)",
+	}
+	m.handleLoopEvent(event)
+
+	// Floating window title should indicate stopped
+	if !strings.Contains(m.floatingWindow.Title, "Stopped") {
+		t.Errorf("expected floating window title to contain 'Stopped', got '%s'", m.floatingWindow.Title)
+	}
+	if !strings.Contains(m.floatingWindow.Title, "Iteration Limit") {
+		t.Errorf("expected floating window title to contain 'Iteration Limit', got '%s'", m.floatingWindow.Title)
+	}
+
+	close(events)
+}
+
+func TestFloatingWindow_SetTitle(t *testing.T) {
+	fw := NewFloatingWindow("Original Title")
+	fw.SetSize(100, 40)
+
+	// Verify original title
+	if fw.Title != "Original Title" {
+		t.Errorf("expected title 'Original Title', got '%s'", fw.Title)
+	}
+
+	// Change title
+	fw.SetTitle("New Title")
+	if fw.Title != "New Title" {
+		t.Errorf("expected title 'New Title', got '%s'", fw.Title)
+	}
+
+	// Show and verify title renders
+	fw.Show("Content")
+	view := fw.View()
+	if !strings.Contains(view, "New Title") {
+		t.Errorf("expected view to contain 'New Title', got '%s'", view)
+	}
+}
+
+func TestFloatingWindow_SetBorderColor(t *testing.T) {
+	fw := NewFloatingWindow("Test")
+	fw.SetSize(100, 40)
+
+	// Set a custom border color
+	fw.SetBorderColor(colorYellow)
+
+	// Show content - should not panic and should render
+	fw.Show("Content with custom border")
+	view := fw.View()
+	if view == "" {
+		t.Error("expected non-empty view with custom border color")
+	}
+	if !strings.Contains(view, "Test") {
+		t.Error("expected view to contain title")
+	}
+}
+
+func TestModel_HandleLoopEvent_Done_StillWorks(t *testing.T) {
+	events := make(chan loop.Event, 10)
+	m := NewModelWithEvents(events)
+	m = updateModel(m, tea.WindowSizeMsg{Width: 100, Height: 40})
+
+	// Feed progress
+	outputEvent := loop.Event{
+		Type:      loop.EventClaudeOutput,
+		Iteration: 2,
+		MaxIter:   10,
+		Output:    "## Progress\nAll tasks completed\n\n## Learnings\nGood patterns",
+	}
+	m.handleLoopEvent(outputEvent)
+
+	// Trigger done
+	doneEvent := loop.Event{
+		Type:      loop.EventDone,
+		Iteration: 2,
+		MaxIter:   10,
+	}
+	m.handleLoopEvent(doneEvent)
+
+	// Verify completion path still works
+	if !m.completed {
+		t.Error("expected completed to be true")
+	}
+	if m.status != "Completed" {
+		t.Errorf("expected status 'Completed', got '%s'", m.status)
+	}
+	if !m.floatingWindow.IsVisible() {
+		t.Error("expected floating window to be visible")
+	}
+	if !strings.Contains(m.floatingWindow.Title, "Completed") {
+		t.Errorf("expected title to contain 'Completed', got '%s'", m.floatingWindow.Title)
+	}
+
+	view := m.floatingWindow.View()
+	if !strings.Contains(view, "All tasks completed") {
+		t.Errorf("expected view to contain progress, got '%s'", view)
+	}
+
+	close(events)
+}
+
+func TestHeaderRenderStatus_Stopped(t *testing.T) {
+	h := NewHeader()
+	h.SetIteration(5, 5)
+	h.SetStatus("Stopped")
+	h.SetWidth(80)
+
+	view := h.View()
+	if !strings.Contains(view, "Stopped") {
+		t.Errorf("expected 'Stopped' in view, got '%s'", view)
+	}
 }
 
 func TestModel_HandleLoopEvent_Error(t *testing.T) {

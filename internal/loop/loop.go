@@ -208,6 +208,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		// Check max iterations (skip in extreme mode until triggered)
 		if !l.cfg.ExtremeMode || l.extremeModeTriggered {
 			if currentIter > l.cfg.MaxIterations {
+				if err := l.deps.DB.UpdatePlanStatus(l.cfg.PlanID, db.PlanStatusStopped); err != nil {
+					log.Warn("failed to update plan status to stopped", "error", err)
+				}
 				l.emit(NewEvent(EventMaxIterations, l.iteration-1, l.effectiveMaxIter(),
 					fmt.Sprintf("Reached max iterations (%d)", l.cfg.MaxIterations)))
 				return nil

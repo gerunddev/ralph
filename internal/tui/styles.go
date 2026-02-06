@@ -172,6 +172,10 @@ var (
 				Foreground(colorRed).
 				Bold(true)
 
+	statusStoppedStyle = lipgloss.NewStyle().
+				Foreground(colorYellow).
+				Bold(true)
+
 	statusPendingStyle = lipgloss.NewStyle().
 				Foreground(colorGray)
 )
@@ -315,6 +319,9 @@ var (
 
 	phaseFailedStyle = lipgloss.NewStyle().
 				Foreground(colorRed)
+
+	phaseStoppedStyle = lipgloss.NewStyle().
+				Foreground(colorYellow)
 )
 
 // GetPhaseStyle returns the appropriate style for a phase name.
@@ -328,7 +335,9 @@ func GetPhaseStyle(phase string) lipgloss.Style {
 		return phaseReviewingStyle
 	case "completed", "done", "complete":
 		return phaseCompletedStyle
-	case "failed", "error", "max iterations":
+	case "stopped", "max iterations":
+		return phaseStoppedStyle
+	case "failed", "error":
 		return phaseFailedStyle
 	default:
 		return lipgloss.NewStyle().Foreground(colorGray)

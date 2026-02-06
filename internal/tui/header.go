@@ -110,6 +110,8 @@ func (h Header) renderStatus() string {
 		return statusReviewingStyle.Render(status)
 	case "completed", "done", "complete":
 		return statusCompletedStyle.Render(status)
+	case "stopped":
+		return statusStoppedStyle.Render(status)
 	case "failed", "error":
 		return statusFailedStyle.Render(status)
 	default:

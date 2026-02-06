@@ -205,6 +205,15 @@ func TestLoopBasicIteration(t *testing.T) {
 	} else if !strings.Contains(learnings.Content, "Learned something") {
 		t.Errorf("expected learnings to contain 'Learned something', got: %s", learnings.Content)
 	}
+
+	// Verify plan status is "stopped" after max iterations
+	updatedPlan, err := database.GetPlan(plan.ID)
+	if err != nil {
+		t.Fatalf("failed to get plan: %v", err)
+	}
+	if updatedPlan.Status != db.PlanStatusStopped {
+		t.Errorf("expected plan status 'stopped' after max iterations, got: %s", updatedPlan.Status)
+	}
 }
 
 func TestLoopDoneMarker(t *testing.T) {
@@ -760,13 +769,13 @@ func TestLoopDoneMarkerIgnoredWithEdits(t *testing.T) {
 		t.Error("expected EventMaxIterations event when DONE is rejected due to edits")
 	}
 
-	// Plan should NOT be marked complete
+	// Plan should be marked "stopped" (not completed)
 	updatedPlan, err := database.GetPlan(plan.ID)
 	if err != nil {
 		t.Fatalf("failed to get plan: %v", err)
 	}
-	if updatedPlan.Status == db.PlanStatusCompleted {
-		t.Error("expected plan NOT to be marked complete when DONE was rejected")
+	if updatedPlan.Status != db.PlanStatusStopped {
+		t.Errorf("expected plan status 'stopped' when DONE was rejected, got: %s", updatedPlan.Status)
 	}
 }
 
@@ -1777,14 +1786,14 @@ func TestLoop_ExtremeMode_DoesNotExitOnFirstBothDone(t *testing.T) {
 		t.Error("expected EventMaxIterations event")
 	}
 
-	// Plan should NOT be marked completed in extreme mode - it exits via max iterations,
-	// not via the normal "done" path. Plan completion is only set in Run() for normal mode.
+	// Plan should be marked "stopped" in extreme mode - it exits via max iterations,
+	// not via the normal "done" path.
 	updatedPlan, err := database.GetPlan(plan.ID)
 	if err != nil {
 		t.Fatalf("failed to get plan: %v", err)
 	}
-	if updatedPlan.Status == db.PlanStatusCompleted {
-		t.Errorf("expected plan NOT to be marked complete in extreme mode (exits via max iterations), got: %s", updatedPlan.Status)
+	if updatedPlan.Status != db.PlanStatusStopped {
+		t.Errorf("expected plan status 'stopped' in extreme mode (exits via max iterations), got: %s", updatedPlan.Status)
 	}
 
 	// Loop iteration counter is 5 because: trigger at iter 1, max becomes 1+3=4,
